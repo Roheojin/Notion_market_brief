@@ -224,6 +224,27 @@ def weighted_score(sigs: list[Signal], weights: dict) -> float:
     return sum(s.score * float(weights.get(s.category, 1.0)) for s in sigs)
 
 
+def _drop_rows(path: str, prefix: str):
+    """같은 날짜·이름 기록을 지움 (재실행해도 기록이 중복되지 않게)."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8-sig") as f:
+        lines = f.readlines()
+    keep = [l for l in lines if not l.startswith(prefix)]
+    if len(keep) != len(lines):
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.writelines(keep)
+
+
+def _already_logged(day: dt.datetime, names: list[str]) -> bool:
+    """그 거래일·지수의 판단 기록이 이미 있으면 True (예비 실행 중복 방지)."""
+    if not os.path.exists(CHART_LOG):
+        return False
+    with open(CHART_LOG, encoding="utf-8-sig") as f:
+        text = f.read()
+    return all(f"\n{day:%Y-%m-%d},{n}," in text for n in names)
+
+
 def log_chart(now: dt.datetime, name: str, tf: str, sigs: list[Signal],
               close: float):
     """카테고리별 점수를 매일 축적 (무신호 카테고리는 0으로 — 피드백 계산용)."""
@@ -232,6 +253,7 @@ def log_chart(now: dt.datetime, name: str, tf: str, sigs: list[Signal],
         per = {c: 0.0 for c in CATEGORIES}
         for s in sigs:
             per[s.category] = per.get(s.category, 0.0) + s.score
+        _drop_rows(CHART_LOG, f"{now:%Y-%m-%d},{name},{tf},")
         new = not os.path.exists(CHART_LOG)
         with open(CHART_LOG, "a", encoding="utf-8-sig") as f:
             if new:
@@ -1065,6 +1087,8 @@ def log_fx(now: dt.datetime, fx_rows: list[dict]):
     """환율·매크로 일일 상태 축적 — 월간 예측 피드백의 원장."""
     try:
         os.makedirs(HIST_DIR, exist_ok=True)
+        for r in fx_rows:
+            _drop_rows(FX_LOG, f"{now:%Y-%m-%d},{r['meta']['name']},")
         new = not os.path.exists(FX_LOG)
         with open(FX_LOG, "a", encoding="utf-8-sig") as f:
             if new:
@@ -1772,7 +1796,9 @@ def run_chart(sample: bool = False, post: bool = False,
     # ── 휴장일 체크: 한국장은 코스피 오늘 봉, 그 외는 S&P500 어제 이상 봉 ──
     if not sample and not force:
         try:
-            anchor, lag = ("^KS11", 0) if market == "kr" else ("^GSPC", 1)
+            # 한국장: 실행이 밀려 자정을 넘겨도 다음 날 09시 전이면 전날 장을 게시
+            anchor, lag = (("^KS11", 1 if now.hour < 9 else 0) if market == "kr"
+                           else ("^GSPC", 1))
             ref = get_daily(anchor, 30)
             last_date = ref.index[-1].date()
             if last_date < now.date() - dt.timedelta(days=lag):
@@ -1844,6 +1870,12 @@ def run_chart(sample: bool = False, post: bool = False,
         day = max(r["df"].index[-1].date() for r in main)
         now = dt.datetime.combine(day, now.timetz())
     date_str = f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]})"
+    # 예비 실행: 그 거래일이 이미 게시·기록됐으면 건너뜀 (force면 다시 게시)
+    if post and not sample and not force and _already_logged(
+            now, [r["meta"]["name"] for r in rows]):
+        print(f"[차트 분석] {MARKET_LABEL.get(market, '')} {now:%Y-%m-%d} "
+              f"이미 게시됨 — 건너뜀")
+        return []
     for r in rows:
         log_chart(now, r["meta"]["name"], "일봉", r["sigs_d"],
                   float(r["df"]["close"].iloc[-1]))

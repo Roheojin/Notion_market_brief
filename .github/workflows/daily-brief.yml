@@ -8,6 +8,9 @@ on:
     - cron: "40 11 * * 1-5"
     # 미국장: 화~토 06:20 KST (= 전일 21:20 UTC) — 미국장 마감 직후
     - cron: "20 21 * * 1-5"
+    # 예비 실행 (GitHub 정기 실행이 몇 시간씩 밀리거나 빠질 때 대비 — 이미 게시됐으면 건너뜀)
+    - cron: "10 13 * * 1-5"    # 한국장 22:10 KST
+    - cron: "50 22 * * 1-5"    # 미국장 07:50 KST
   workflow_dispatch:      # Actions 탭의 "Run workflow" 버튼
     inputs:
       market:
@@ -47,7 +50,7 @@ jobs:
           KRX_PW: ${{ secrets.KRX_PW }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MARKETS: ${{ github.event_name == 'schedule' && (github.event.schedule == '40 11 * * 1-5' && 'kr' || 'us') || (inputs.market == 'both' && 'kr us' || inputs.market) }}
+          MARKETS: ${{ github.event_name == 'schedule' && ((github.event.schedule == '40 11 * * 1-5' || github.event.schedule == '10 13 * * 1-5') && 'kr' || 'us') || (inputs.market == 'both' && 'kr us' || inputs.market) }}
           FORCE: ${{ inputs.force && '--force' || '' }}
         run: |
           for m in $MARKETS; do
