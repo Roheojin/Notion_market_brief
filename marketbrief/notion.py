@@ -144,12 +144,17 @@ def _schema(summary: dict) -> dict:
     v_opts = [{"name": n, "color": c} for n, c in VERDICTS]
     props: dict = {"제목": {"title": {}}, "날짜": {"date": {}}}
     div_opts = []
-    for ix in summary.get("indices", []):
-        n = ix["name"]
-        props[f"{n} 일봉"] = {"select": {"options": v_opts}}
-        props[f"{n} 주봉"] = {"select": {"options": v_opts}}
+    names = [ix["name"] for ix in summary.get("indices", [])]
+    # 열 순서: 종가 → 등락% → 일봉 → 주봉 (종가끼리 앞에 모음)
+    for n in names:
         props[f"{n} 종가"] = {"number": {"format": "number_with_commas"}}
+    for n in names:
         props[f"{n} 등락%"] = {"number": {"format": "number"}}
+    for n in names:
+        props[f"{n} 일봉"] = {"select": {"options": v_opts}}
+    for n in names:
+        props[f"{n} 주봉"] = {"select": {"options": v_opts}}
+    for n in names:
         for tf in ("일봉", "주봉"):
             div_opts += [{"name": f"{n} {tf} 상승", "color": "red"},
                          {"name": f"{n} {tf} 하락", "color": "blue"}]
