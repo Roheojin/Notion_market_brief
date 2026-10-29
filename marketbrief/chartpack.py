@@ -1629,7 +1629,7 @@ def _load_flows(sample: bool) -> pd.DataFrame | None:
 def run_chart(sample: bool = False, post: bool = False,
               force: bool = False, market: str = "all") -> list[str]:
     """market: "kr"(한국장 마감 — 코스피·니케이·수급·환율), "us"(미국장 마감 —
-    나스닥100·S&P500·비트코인), "all"(전부 한 페이지)."""
+    나스닥100·S&P500·다우·비트코인), "all"(전부 한 페이지)."""
     os.makedirs(OUT, exist_ok=True)
     now = dt.datetime.now(KST)
     get_daily = sample_daily if sample else fetch_daily
