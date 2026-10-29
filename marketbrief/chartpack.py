@@ -8,7 +8,7 @@
 
 블로그 팩 (output/blog_YYYYMMDD/):
   붙여넣기용 본문 텍스트(지표별 상세 분석) + 차트 이미지
-  — 증권사 앱 형식 1장(가격·이평·일목·BB·매물대 / 거래량 / MACD / RSI), 일봉·주봉 각각
+  — 증권사 앱 형식 1장(가격·이평·일목·BB / 거래량 / MACD / RSI), 일봉·주봉 각각
 
 지표 판단 로그 (history/chart_log.csv):
   카테고리별 점수를 매일 축적 → 1달 주기로 적중률을 계산해
@@ -1094,7 +1094,7 @@ def make_blog_momentum(row: dict, tf: str, date_str: str, path: str):
 
 
 # ──────────────────────────────────────────────────────────────
-# 증권사 앱 형식 통합 차트 (가격+이평+일목+BB+매물대 / 거래량 / MACD / RSI)
+# 증권사 앱 형식 통합 차트 (가격+이평+일목+BB / 거래량 / MACD / RSI)
 # ──────────────────────────────────────────────────────────────
 
 APP_FIGSIZE = (12.0, 15.0)    # 1200x1500 @ DPI 100
@@ -1104,7 +1104,6 @@ APP = {
     "span1": "#B5626B", "span2": "#5B84B8",
     "cloud1": "#F0A8B0", "cloud2": "#A0C0F0",    # 선행1 위(빨강) / 선행2 위(파랑)
     "bb_up": "#C4607A", "bb_dn": "#5B88C0",
-    "maemul": "#E0E0E0", "maemul_poc": "#9AA3AD", "maemul_txt": "#6E6E6E",
     "macd": "#F08A24", "sig": "#587848", "osc_pos": "#4878E0", "osc_neg": "#507840",
     "rsi": "#F08A24",
     "tag_vol": "#606060", "tag_ind": "#F88000",
@@ -1204,7 +1203,7 @@ def _level_label(ax, y: float, text: str):
 
 
 def make_blog_app(row: dict, tf: str, date_str: str, path: str):
-    """증권사 앱 차트 형식 1장 — 가격(이평 5/20/60/120 · 매물대 · 일목 · BB) /
+    """증권사 앱 차트 형식 1장 — 가격(이평 5/20/60/120 · 일목 · BB) /
     거래량 / MACD / RSI, 시그널 교차 화살표 · 오른쪽 축 값 태그."""
     meta = row["meta"]
     df = row["df"] if tf == "일봉" else row["dfw"]
@@ -1234,7 +1233,7 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
     # ── 범례 (색 글자, 폭 넘으면 줄바꿈) ──
     sh = ich["shift"]
     legend = [("5", APP["ma5"]), ("20", APP["ma20"]), ("60", APP["ma60"]),
-              ("120", APP["ma120"]), ("매물대(10)", "#B0B0B0"),
+              ("120", APP["ma120"]),
               (f"전환선({ich['kijun']},{ich['tenkan']},{sh},{ich['senkou_b']},{sh})",
                APP["tenkan"]),
               ("기준선", APP["kijun"]), ("선행스팬1", APP["span1"]),
@@ -1264,8 +1263,8 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
                       alpha=0.75, linewidth=0, interpolate=True, zorder=1)
     ax_p.fill_between(xa, aa, bb_, where=v & (aa < bb_), color=APP["cloud2"],
                       alpha=0.75, linewidth=0, interpolate=True, zorder=1)
-    ax_p.plot(xa, aa, color=APP["span1"], lw=1.0, zorder=2)
-    ax_p.plot(xa, bb_, color=APP["span2"], lw=1.0, zorder=2)
+    ax_p.plot(xa, aa, color=APP["span1"], lw=0.6, zorder=2)
+    ax_p.plot(xa, bb_, color=APP["span2"], lw=0.6, zorder=2)
 
     lo_p = float(np.nanmin(np.concatenate([d["low"], a, b, fa, fb,
                                            d["bb_dn"].dropna()])))
@@ -1275,41 +1274,15 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
     ax_p.set_xlim(*xlim)
     ax_p.set_ylim(lo_p - span * 0.05, hi_p + span * 0.06)
 
-    # 매물대 — 표시 구간 거래량을 종가 기준 가격대 10칸으로 (POC는 진하게)
     vol = d["volume"].to_numpy(dtype=float)
     has_vol = np.isfinite(vol).any() and np.nanmax(vol) > 0
-    if has_vol:
-        edges = np.linspace(float(d["low"].min()), float(d["high"].max()), 11)
-        idx = np.clip(np.searchsorted(edges, d["close"].to_numpy(dtype=float),
-                                      side="right") - 1, 0, 9)
-        tot = np.bincount(idx, weights=np.nan_to_num(vol), minlength=10)
-        pct = tot / tot.sum() * 100 if tot.sum() > 0 else tot
-        full = (xlim[1] - xlim[0]) * 0.72
-        poc = int(np.argmax(pct))
-        h = (edges[1] - edges[0]) * 0.72
-        for k in range(10):
-            if pct[k] <= 0:
-                continue
-            w = full * pct[k] / pct.max()
-            yc = (edges[k] + edges[k + 1]) / 2
-            ax_p.barh(yc, w, height=h, left=xlim[0],
-                      color=APP["maemul_poc"] if k == poc else APP["maemul"],
-                      alpha=0.55 if k == poc else 0.7, zorder=1.5, linewidth=0)
-            t = ax_p.text(xlim[0] + w, yc, f"{pct[k]:.2f}%", ha="right",
-                          va="center", fontsize=10.5, color=APP["maemul_txt"],
-                          zorder=7)
-            # 막대가 글자보다 짧으면 막대 오른쪽에 (차트 왼쪽 밖으로 안 나가게)
-            r = fig.canvas.get_renderer()
-            if t.get_window_extent(r).x0 < ax_p.get_window_extent(r).x0:
-                t.set_ha("left")
-                t.set_x(xlim[0] + w + (xlim[1] - xlim[0]) * 0.004)
 
     ax_p.plot(x, d["bb_up"], color=APP["bb_up"], lw=1.4, zorder=3)
     ax_p.plot(x, d["bb_dn"], color=APP["bb_dn"], lw=1.4, zorder=3)
     for key in ("ma5", "ma20", "ma60", "ma120"):
         ax_p.plot(x, d[key], color=APP[key], lw=1.2, zorder=4)
-    ax_p.plot(x, d["tenkan"], color=APP["tenkan"], lw=1.2, zorder=4)
-    ax_p.plot(x, d["kijun"], color=APP["kijun"], lw=1.4, zorder=4)
+    ax_p.plot(x, d["tenkan"], color=APP["tenkan"], lw=0.8, zorder=4)
+    ax_p.plot(x, d["kijun"], color=APP["kijun"], lw=0.8, zorder=4)
     _candles(ax_p, x, d, body_w=0.7, wick_w=1.0)
     _app_tag(ax_p, close, f"{close:,.2f}\n{chg:+.2f}%", dcol,
              lambda t: f"{t:,.0f}", nlines=2)
