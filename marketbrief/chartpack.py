@@ -264,6 +264,34 @@ def _last_price_tag(ax, d):
                 annotation_clip=False,
                 bbox=dict(boxstyle="square,pad=0.25", facecolor=col,
                           edgecolor="none"))
+    # 태그와 겹치는 가격축 눈금 숫자는 숨김 (트레이딩뷰처럼)
+    lo, hi = ax.get_ylim()
+    gap = _pt_to_data(ax, 8.5 * 1.6)
+    ax.set_yticks([t for t in ax.get_yticks()
+                   if lo <= t <= hi and abs(t - close) >= gap])
+
+
+def _pt_to_data(ax, pt: float) -> float:
+    """글자 크기(pt)를 그 축의 y 데이터 단위로 환산."""
+    lo, hi = ax.get_ylim()
+    h_px = ax.get_window_extent().height or 1.0
+    return (hi - lo) * (pt * ax.figure.dpi / 72) / h_px
+
+
+def _spread_labels(ys, gap: float, hi: float) -> np.ndarray:
+    """라벨 y 위치를 서로 gap 이상 떨어지게 벌림 (위아래 순서 유지, 위쪽 hi 넘지 않게)."""
+    ys = np.asarray(ys, dtype=float)
+    order = np.argsort(ys)
+    pos = ys[order].copy()
+    for i in range(1, len(pos)):
+        pos[i] = max(pos[i], pos[i - 1] + gap)
+    if len(pos) and pos[-1] > hi:
+        pos[-1] = hi
+        for i in range(len(pos) - 2, -1, -1):
+            pos[i] = min(pos[i], pos[i + 1] - gap)
+    out = np.empty_like(pos)
+    out[order] = pos
+    return out
 
 
 def _future_cloud(df: pd.DataFrame, fwd: int):
@@ -429,10 +457,12 @@ def _draw_rsi(ax, d, x, label="RSI(14)", divs: list[dict] | None = None):
                 lw=1.8, alpha=0.95, zorder=6, solid_capstyle="round")
         ax.scatter([dv["i1"], dv["i2"]], [dv["r1"], dv["r2"]], s=16,
                    color=col, zorder=7)
+        # 라벨은 점 왼쪽에 — 오른쪽 가격축 숫자와 겹치지 않게
         ax.annotate("상승 다이버전스" if bull else "하락 다이버전스",
                     xy=(dv["i2"], dv["r2"]),
-                    xytext=(5, -11 if bull else 7), textcoords="offset points",
-                    fontsize=8.5, weight="bold", color=col, zorder=7)
+                    xytext=(-5, -11 if bull else 7), textcoords="offset points",
+                    ha="right", fontsize=8.5, weight="bold", color=col,
+                    zorder=7)
     _style_ax(ax)
     ax.set_ylim(0, 100)
     ax.set_yticks([30, 50, 70])
@@ -1076,10 +1106,12 @@ def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str):
     for actor in actors:
         ax.plot(x, cum[actor], color=C[actor], lw=2.0, label=actor,
                 solid_capstyle="round")
-    for actor in actors:
-        v = float(cum[actor].iloc[-1])
+    # 끝값이 비슷해도 라벨끼리 겹치지 않게 세로 간격을 벌림
+    last = [float(cum[a].iloc[-1]) for a in actors]
+    ys = _spread_labels(last, _pt_to_data(ax, 11.5 * 1.4), ax.get_ylim()[1])
+    for actor, v, y in zip(actors, last, ys):
         ax.annotate(f"{actor} {v:+.1f}조", xy=(x[-1], v),
-                    xytext=(x[-1] + len(x) * 0.012, v), textcoords="data",
+                    xytext=(x[-1] + len(x) * 0.012, y), textcoords="data",
                     color=C[actor], fontsize=11.5, weight="bold", va="center",
                     annotation_clip=False)
     _style_ax(ax)
