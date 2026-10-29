@@ -146,10 +146,11 @@ def _schema(summary: dict) -> dict:
     div_opts = []
     names = [ix["name"] for ix in summary.get("indices", [])]
     # 열 순서: 종가 → 등락% → 일봉 → 주봉 (종가끼리 앞에 모음)
+    # 종가 · 등락%는 전날 대비 색(상승 초록 / 하락 빨강)을 입힌 텍스트
     for n in names:
-        props[f"{n} 종가"] = {"number": {"format": "number_with_commas"}}
+        props[f"{n} 종가"] = {"rich_text": {}}
     for n in names:
-        props[f"{n} 등락%"] = {"number": {"format": "number"}}
+        props[f"{n} 등락%"] = {"rich_text": {}}
     for n in names:
         props[f"{n} 일봉"] = {"select": {"options": v_opts}}
     for n in names:
@@ -181,6 +182,13 @@ def _num(v):
     return None if f != f else f      # NaN → 빈 칸
 
 
+def _chg_color(chg) -> str | None:
+    """전날 대비 상승 초록 / 하락 빨강."""
+    if chg is None or chg == 0:
+        return None
+    return "green" if chg > 0 else "red"
+
+
 def _props(summary: dict, title_key: str) -> dict:
     p: dict = {
         title_key: {"title": [{"type": "text",
@@ -194,8 +202,12 @@ def _props(summary: dict, title_key: str) -> dict:
             p[f"{n} 일봉"] = {"select": {"name": ix["vd"]}}
         if ix.get("vw"):
             p[f"{n} 주봉"] = {"select": {"name": ix["vw"]}}
-        p[f"{n} 종가"] = {"number": _num(ix.get("close"))}
-        p[f"{n} 등락%"] = {"number": _num(ix.get("chg"))}
+        close, chg = _num(ix.get("close")), _num(ix.get("chg"))
+        col = _chg_color(chg)
+        p[f"{n} 종가"] = {"rich_text": _rt(f"{close:,.2f}", color=col)
+                          if close is not None else []}
+        p[f"{n} 등락%"] = {"rich_text": _rt(f"{chg:+.2f}%", color=col)
+                           if chg is not None else []}
         divs += [f"{n} {d}" for d in ix.get("divs", [])]
     p["다이버전스"] = {"multi_select": [{"name": d} for d in dict.fromkeys(divs)]}
     fx = summary.get("fx") or {}
@@ -215,6 +227,8 @@ def _props(summary: dict, title_key: str) -> dict:
 # ──────────────────────────────────────────────────────────────
 
 _IMG = re.compile(r"^《이미지\s*\d+\s*—\s*(.+?)》$")
+# 요약 줄 "코스피 3,481.81 (-1.30%) — 일봉 …" → 이름 / 종가(등락%) / 등락 / 나머지
+_SUMMARY = re.compile(r"^(.+? )([\d,.]+ \(([+-]?\d+\.\d+)%\))(.*)$")
 
 
 def _rt(text: str, bold: bool = False, color: str | None = None) -> list[dict]:
@@ -282,7 +296,15 @@ def text_to_blocks(text: str, upload) -> list[dict]:
             continue
         _flush()
         if line.startswith("· "):
-            blocks.append(_blk("bulleted_list_item", line[2:].strip()))
+            m = _SUMMARY.match(line[2:].strip())
+            if m:
+                col = _chg_color(float(m.group(3)))
+                blocks.append({"object": "block", "type": "bulleted_list_item",
+                               "bulleted_list_item": {"rich_text":
+                                   _rt(m.group(1)) + _rt(m.group(2), color=col)
+                                   + _rt(m.group(4))}})
+            else:
+                blocks.append(_blk("bulleted_list_item", line[2:].strip()))
         elif line.startswith("포착 신호:"):
             blocks.append(_blk("callout", line, emoji="📍"))
         elif line.startswith("→ "):
@@ -343,10 +365,17 @@ def _ensure_schema(client, ds_id: str, schema: dict) -> str:
                      "제목")
     missing = {k: v for k, v in schema.items()
                if k not in have and "title" not in v}
+    # 종류가 바뀐 열(예: 종가 숫자 → 색 텍스트)은 새 종류로 변경
+    changed = {k: v for k, v in schema.items()
+               if k in have and "title" not in v
+               and have[k].get("type") not in v}
     if missing:
         print(f"  [notion] DB 열 추가: {', '.join(missing)}")
+    if changed:
+        print(f"  [notion] DB 열 종류 변경: {', '.join(changed)}")
+    if missing or changed:
         client.call("PATCH", f"/v1/data_sources/{ds_id}",
-                    {"properties": missing})
+                    {"properties": {**missing, **changed}})
     return title_key
 
 
