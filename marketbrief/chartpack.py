@@ -885,8 +885,8 @@ FX_SERIES = [
      "unit": "원", "base": 1385.0},
     {"ticker": "DX-Y.NYB", "name": "달러인덱스", "fmt": "{:,.2f}",
      "unit": "pt", "base": 104.0},
-    {"ticker": "^TNX",     "name": "미 10년물", "fmt": "{:.2f}%",
-     "unit": "%p", "scale": 0.1, "base": 42.0},
+    {"ticker": "^TNX",     "name": "미 10년물", "fmt": "{:.2f}%",   # 야후 ^TNX는 % 단위
+     "unit": "%p", "base": 4.2},
     {"ticker": "JPYKRW=X", "name": "원/엔(100엔)", "fmt": "{:,.1f}원",
      "unit": "원", "scale": 100, "base": 9.4},
 ]

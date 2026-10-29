@@ -88,10 +88,8 @@ def load_flows_long(krx_code: str, days: int = 490) -> pd.DataFrame | None:
 
     if cached is not None and not cached.empty:
         last = cached.index[-1].date()
-        if last >= today - dt.timedelta(days=1):
-            print(f"  [flows] {krx_code} 캐시 최신 ({last}) — 추가 요청 없음")
-            return cached.tail(days)
-        # 증분: 마지막 저장일 다음날부터 (겹침 방지용으로 3일 여유)
+        # 증분: 마지막 저장일 포함 3일 전부터 다시 받아 덮어씀
+        # (장중·장 마감 직후에 저장된 날의 값도 다음 실행에서 확정값으로 갱신)
         frm = last - dt.timedelta(days=3)
         print(f"  [flows] {krx_code} 캐시 {len(cached)}행 (~{last}) "
               f"→ {frm}~{today} 증분 요청")
