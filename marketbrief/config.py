@@ -55,7 +55,11 @@ MACRO_BY_SESSION = {
 # 형식: ("YYYY-MM-DD", "일정명", 중요도 1~3)  — 중요도는 인베스팅닷컴 기준처럼
 # 3=시장 전체를 움직임(FOMC·CPI), 2=주요 지표, 1=참고. 생략하면 2로 간주.
 ECON_CALENDAR = [
-    # ("2026-08-28", "한국은행 금통위", 3),
+    # (날짜 KST, 이름, 중요도 1~3) — 한 달에 한 번 정도 채워 넣으면 됩니다
+    ("2026-11-10", "미국 CPI (10월분) 21:30 발표", 3),
+    ("2026-11-26", "한국은행 금통위 (예정)", 3),
+    ("2026-12-10", "FOMC 결과 발표 (12/9 회의, KST 새벽)", 3),
+    ("2026-12-10", "미국 CPI (11월분) 22:30 발표", 3),
 ]
 
 # 이슈 뉴스: RSS 피드 + 키워드 선별
@@ -112,10 +116,16 @@ PARAMS = {
 CHART_INDICES = [
     {"ticker": "^KS11", "name": "코스피",    "market": "KR", "currency": "pt",
      "krx": "KOSPI"},
+    {"ticker": "^KQ11", "name": "코스닥",    "market": "KR", "currency": "pt",
+     "krx": "KOSDAQ"},
     {"ticker": "^N225", "name": "니케이225", "market": "JP", "currency": "pt"},
+    {"ticker": "^HSI",  "name": "항셍",      "market": "CN", "currency": "pt"},
+    {"ticker": "000001.SS", "name": "상해종합", "market": "CN", "currency": "pt"},
     {"ticker": "^NDX",  "name": "나스닥100", "market": "US", "currency": "pt"},
     {"ticker": "^GSPC", "name": "S&P 500",   "market": "US", "currency": "pt"},
     {"ticker": "^DJI",  "name": "다우",      "market": "US", "currency": "pt"},
+    {"ticker": "^SOX",  "name": "필라델피아 반도체", "market": "US", "currency": "pt"},
+    {"ticker": "^VIX",  "name": "VIX",       "market": "US", "currency": "pt"},
     {"ticker": "BTC-USD", "name": "비트코인", "market": "CRYPTO", "currency": "$"},
 ]
 

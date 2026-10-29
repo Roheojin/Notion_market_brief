@@ -25,6 +25,7 @@ DB는 시장별로 따로(「차트 분석 아카이브 (한국장)」 · 「…
 
 이 파일은 표준 라이브러리 + requests만 씁니다 (단독 실행 가능).
 """
+import datetime as dt
 import json
 import os
 import re
@@ -494,6 +495,67 @@ def publish_pack(blog_dir: str, test: bool = False) -> str | None:
             with open(out, "w", encoding="utf-8") as f:
                 json.dump(client.log, f, ensure_ascii=False, indent=1)
             print(f"  [notion] 드라이런 — 요청 {len(client.log)}건 기록: {out}")
+
+
+def _client_and_parent():
+    """(client, 부모 페이지 id) — 토큰이 없으면 (None, None). 드라이런이면 기록용 client."""
+    dry = os.environ.get("NOTION_DRYRUN") == "1"
+    token = os.environ.get("NOTION_TOKEN", "").strip()
+    if not token and not dry:
+        return None, None
+    parent = os.environ.get("NOTION_PARENT_PAGE_ID", "").strip()
+    return (_DryRun() if dry else _Client(token)), _norm_id(parent or "0" * 32)
+
+
+def update_feedback(market: str | None, results: dict) -> int:
+    """5거래일이 지난 페이지의 '피드백' · '피드백 메모'를 채움.
+
+    results: {날짜(date): (피드백 선택값, 메모)}. 이미 채운 페이지는 건드리지 않습니다.
+    """
+    client, parent_id = _client_and_parent()
+    if client is None or not results:
+        return 0
+    title = DB_TITLE + (f" ({market})" if market else "")
+    db_id = _find_db(client, parent_id, title)
+    if not db_id:
+        return 0
+    ds_id = _data_source_id(client, db_id)
+    r = client.call("POST", f"/v1/data_sources/{ds_id}/query", {
+        "filter": {"property": "피드백", "select": {"is_empty": True}},
+        "page_size": 100,
+    })
+    n = 0
+    for page in r.get("results", []):
+        start = (((page.get("properties") or {}).get("날짜") or {})
+                 .get("date") or {}).get("start")
+        if not start:
+            continue
+        hit = results.get(dt.date.fromisoformat(start[:10]))
+        if not hit:
+            continue
+        sel, memo = hit
+        client.call("PATCH", f"/v1/pages/{page['id']}", {"properties": {
+            "피드백": {"select": {"name": sel}},
+            "피드백 메모": {"rich_text": _rt(memo)},
+        }})
+        n += 1
+    print(f"  [notion] 피드백 자동 기록 {n}건 ({title})")
+    return n
+
+
+def publish_report(title: str, text: str) -> str | None:
+    """부모 페이지 아래에 일반 페이지(월간 적중률 리포트 등)를 만듭니다."""
+    client, parent_id = _client_and_parent()
+    if client is None:
+        return None
+    blocks = text_to_blocks(text, lambda fn: None)
+    page = client.call("POST", "/v1/pages", {
+        "parent": {"type": "page_id", "page_id": parent_id},
+        "icon": {"type": "emoji", "emoji": "🎯"},
+        "properties": {"title": {"title": _rt(title)}},
+        "children": blocks[:MAX_CHILDREN],
+    })
+    return page.get("url")
 
 
 def _main(argv: list[str]) -> int:

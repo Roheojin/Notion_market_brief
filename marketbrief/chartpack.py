@@ -33,7 +33,8 @@ try:
 except ImportError:      # 차트 분석 전용 폴더 — cards.py 대신 chartstyle.py
     from .chartstyle import (C, DPI, FIGSIZE, _dir_color, _fmt_price, _style_ax,
                              _verdict_style, stamp_pages)
-from .config import CHART_INDICES, CHART_PARAMS, DISCLAIMER, PARAMS
+from .config import (CHART_INDICES, CHART_PARAMS, DISCLAIMER, ECON_CALENDAR,
+                     PARAMS)
 from .fetch import FLOW_LONG_DAYS, fetch_daily, sample_daily, sample_flows
 from .indicators import add_indicators, to_weekly
 from .signals import (Signal, _crossed_above, _crossed_below, _verdict,
@@ -55,7 +56,7 @@ COL_CHIKOU = "#8a8880"   # 후행스팬 (회색)
 
 MARKET_LABEL = {"kr": "한국장", "us": "미국장"}
 # 실행 시장별 지수 묶음 (니케이는 한국장과 같은 시각 마감, 비트코인은 미국장 마감 시점)
-MARKET_GROUP = {"kr": ("KR", "JP"), "us": ("US", "CRYPTO")}
+MARKET_GROUP = {"kr": ("KR", "JP", "CN"), "us": ("US", "CRYPTO")}
 
 CATEGORIES = ["이평선", "일목", "볼린저", "RSI", "MACD", "거래량", "수급"]
 
@@ -889,18 +890,54 @@ FX_SERIES = [
      "unit": "%p", "base": 4.2},
     {"ticker": "JPYKRW=X", "name": "원/엔(100엔)", "fmt": "{:,.1f}원",
      "unit": "원", "scale": 100, "base": 9.4},
+    {"ticker": "krxbond:국고채3년", "name": "국고채 3년", "fmt": "{:.2f}%",
+     "unit": "%p", "base": 2.9},
+]
+# 미국장 매크로 (미국장 마감 시점 기준)
+MACRO_SERIES = [
+    {"ticker": "^TNX", "name": "미 10년물", "fmt": "{:.2f}%", "unit": "%p", "base": 4.2},
+    {"ticker": "^TYX", "name": "미 30년물", "fmt": "{:.2f}%", "unit": "%p", "base": 4.8},
+    {"ticker": "CL=F", "name": "WTI 유가", "fmt": "${:,.2f}", "unit": "pt", "base": 70.0},
+    {"ticker": "GC=F", "name": "금", "fmt": "${:,.1f}", "unit": "pt", "base": 2400.0},
+    {"ticker": "HG=F", "name": "구리", "fmt": "${:,.3f}", "unit": "pt", "base": 4.5},
 ]
 FX_DAYS = 520   # 약 2년
 FX_LOG = os.path.join(HIST_DIR, "fx_log.csv")
 
 
-def fetch_fx(sample: bool = False) -> list[dict]:
+def _krx_bond(name: str, days: int) -> pd.DataFrame:
+    """KRX 장외 국고채 수익률 일별 (pykrx) — 180일씩 나눠 조회해 OHLC 형태로."""
+    from pykrx import bond
+
+    end = dt.date.today()
+    start = end - dt.timedelta(days=int(days * 1.5))
+    parts, cur = [], start
+    while cur <= end:
+        to = min(cur + dt.timedelta(days=180), end)
+        got = bond.get_otc_treasury_yields(cur.strftime("%Y%m%d"),
+                                           to.strftime("%Y%m%d"), name)
+        if got is not None and not got.empty:
+            parts.append(got["수익률"].astype(float))
+        cur = to + dt.timedelta(days=1)
+    if not parts:
+        raise RuntimeError(f"국고채 수익률 없음: {name}")
+    c = pd.concat(parts)
+    c = c[~c.index.duplicated(keep="last")].sort_index()
+    c.index = pd.to_datetime(c.index)
+    return pd.DataFrame({"open": c, "high": c, "low": c, "close": c,
+                         "volume": 0.0}).tail(days)
+
+
+def fetch_fx(sample: bool = False, series: list[dict] | None = None) -> list[dict]:
     """환율·매크로 시계열 수집 (+지표). 실패한 항목은 건너뜁니다."""
     out: list[dict] = []
     get_daily = sample_daily if sample else fetch_daily
-    for meta in FX_SERIES:
+    for meta in (series or FX_SERIES):
         try:
-            df = get_daily(meta["ticker"], FX_DAYS)
+            if meta["ticker"].startswith("krxbond:") and not sample:
+                df = _krx_bond(meta["ticker"].split(":", 1)[1], FX_DAYS)
+            else:
+                df = get_daily(meta["ticker"], FX_DAYS)
             if sample:  # 합성 시계열을 실제 수준으로 스케일 (레이아웃 테스트)
                 df = df * (meta["base"] / float(df["close"].iloc[-1]))
             if meta.get("scale"):
@@ -911,13 +948,15 @@ def fetch_fx(sample: bool = False) -> list[dict]:
     return out
 
 
-def make_blog_fx(fx_rows: list[dict], date_str: str, path: str):
-    """원/달러 · 달러인덱스 · 미 10년물 · 원/엔 — 2년 흐름 + 20/60일선."""
-    fig = plt.figure(figsize=BLOG_FIGSIZE, dpi=DPI)
-    fig.patch.set_facecolor(C["page"])
-    _blog_header(fig, "환율·매크로 흐름 — 원/달러 · 달러인덱스 · 미 10년물 · 원/엔",
-                 date_str)
+def make_blog_fx(fx_rows: list[dict], date_str: str, path: str,
+                 title: str = "환율·매크로 흐름"):
+    """환율·금리·원자재 — 2년 흐름 + 20/60일선 (항목 수만큼 세로로)."""
     n = len(fx_rows)
+    fig = plt.figure(figsize=(BLOG_FIGSIZE[0], max(BLOG_FIGSIZE[1], 1.75 * n + 1.5)),
+                     dpi=DPI)
+    fig.patch.set_facecolor(C["page"])
+    _blog_header(fig, f"{title} — " + " · ".join(r["meta"]["name"] for r in fx_rows),
+                 date_str)
     gs = fig.add_gridspec(n, 1, left=0.05, right=0.90, top=0.89, bottom=0.075,
                           hspace=0.42)
     for i, r in enumerate(fx_rows):
@@ -1379,10 +1418,11 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
     plt.close(fig)
 
 
-def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str):
+def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str,
+                    label: str = "코스피"):
     fig = plt.figure(figsize=BLOG_FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor(C["page"])
-    _blog_header(fig, "코스피 수급 흐름 — 투자자별 2년 누적 순매수 (조원)",
+    _blog_header(fig, f"{label} 수급 흐름 — 투자자별 2년 누적 순매수 (조원)",
                  date_str)
     ax = fig.add_axes([0.05, 0.09, 0.86, 0.80])
     actors = ["개인", "외국인", "기관"]
@@ -1469,8 +1509,9 @@ def build_blog_text(now: dt.datetime, rows: list[dict],
                     flows_long: pd.DataFrame | None,
                     img_names: dict,
                     fx_rows: list[dict] | None = None,
-                    market: str = "all") -> str:
+                    market: str = "all", extra: dict | None = None) -> str:
     """노션 게시용 본문 (간결). 《이미지 n》 자리에 해당 파일이 들어갑니다."""
+    extra = extra or {}
     label = MARKET_LABEL.get(market, "")
     L: list[str] = [f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]}) "
                     f"{label + ' ' if label else ''}마감 종가 기준", ""]
@@ -1482,23 +1523,48 @@ def build_blog_text(now: dt.datetime, rows: list[dict],
                  f"일봉 {r['vd']} / 주봉 {r['vw']}")
     L.append("")
 
+    # 다가오는 경제 일정 (오늘부터 14일)
+    today = dt.datetime.now(KST).date()
+    events = [(dt.date.fromisoformat(d), name) for d, name, *_ in ECON_CALENDAR
+              if today <= dt.date.fromisoformat(d) <= today + dt.timedelta(days=14)]
+    if events:
+        L.append("■ 다가오는 일정")
+        L.extend(f"· {d:%m/%d} ({WEEKDAY_KO[d.weekday()]}) {name}"
+                 for d, name in sorted(events))
+        L.append("")
+
     img_no = 1
-    if flows_long is not None and len(flows_long) > 40:
-        L.append(f"《이미지 {img_no} — {img_names['flows']}》")
+    for key, fl, label in (("flows", flows_long, "코스피"),
+                           ("flows_kq", extra.get("flows_kq"), "코스닥")):
+        if key not in img_names:
+            continue
+        L.append(f"《이미지 {img_no} — {img_names[key]}》")
         img_no += 1
-        L.append("■ 코스피 수급")
-        cum = flows_long[["외국인", "기관", "개인"]]
+        L.append(f"■ {label} 수급")
+        cum = fl[["외국인", "기관", "개인"]]
         L.append("· 20일 " + " · ".join(
             f"{a} {cum[a].tail(20).sum() / 1e4:+.2f}조" for a in cum.columns))
         L.append("· 2년 " + " · ".join(
             f"{a} {cum[a].sum() / 1e4:+.1f}조" for a in cum.columns))
         L.append("")
-    if fx_rows:
-        if "fx" in img_names:
-            L.append(f"《이미지 {img_no} — {img_names['fx']}》")
+    if "breadth" in img_names:
+        L.append(f"《이미지 {img_no} — {img_names['breadth']}》")
+        img_no += 1
+        L.append("■ 시장 폭")
+        for label, bd in extra.get("breadth", {}).items():
+            last = bd.iloc[-1]
+            adr = f" · ADR(20) {last['ADR']:.0f}%" if pd.notna(last["ADR"]) else ""
+            L.append(f"· {label} 상승 {int(last['상승'])} · 하락 {int(last['하락'])}{adr}")
+        L.append("")
+    for key, rows_, title in (("fx", fx_rows, "환율·매크로"),
+                              ("macro", extra.get("macro"), "금리·원자재")):
+        if not rows_:
+            continue
+        if key in img_names:
+            L.append(f"《이미지 {img_no} — {img_names[key]}》")
             img_no += 1
-        L.append("■ 환율·매크로")
-        L.extend(_fx_brief(fx_rows, flows_long))
+        L.append(f"■ {title}")
+        L.extend(_fx_brief(rows_, flows_long if key == "fx" else None))
         L.append("")
 
     for r in rows:
@@ -1618,19 +1684,74 @@ def write_summary(blog_dir: str, now: dt.datetime, rows: list[dict],
 # 실행 진입점
 # ──────────────────────────────────────────────────────────────
 
-def _load_flows(sample: bool) -> pd.DataFrame | None:
-    """코스피 수급 2년 — 실데이터 캐시 우선, 없으면 합성(테스트)."""
+def _load_flows(sample: bool, code: str = "KOSPI") -> pd.DataFrame | None:
+    """수급 2년 (KOSPI/KOSDAQ) — 실데이터 캐시 우선, 없으면 합성(테스트)."""
     try:
         from .flowcache import load_flows_long
-        fl = load_flows_long("KOSPI", FLOW_LONG_DAYS)
+        fl = load_flows_long(code, FLOW_LONG_DAYS)
         if fl is not None and len(fl) > 40:
             return fl
     except Exception as e:
-        print(f"  (수급 로드 실패: {e})")
+        print(f"  (수급 로드 실패 {code}: {e})")
     if sample:
-        print("  [flows] 캐시 없음 — 합성 수급 데이터 사용")
-        return sample_flows("KOSPI", FLOW_LONG_DAYS)
+        print(f"  [flows] {code} 캐시 없음 — 합성 수급 데이터 사용")
+        return sample_flows(code, FLOW_LONG_DAYS)
     return None
+
+
+def _load_breadth(sample: bool) -> dict:
+    """시장 폭 {"코스피": df, "코스닥": df} — 실패한 시장은 빠짐."""
+    from .breadth import load_breadth, sample_breadth
+    out = {}
+    for label, code in (("코스피", "KOSPI"), ("코스닥", "KOSDAQ")):
+        try:
+            df = sample_breadth(code) if sample else load_breadth(code)
+            if df is not None and len(df) > 5:
+                out[label] = df
+        except Exception as e:
+            print(f"  (시장 폭 로드 실패 {code}: {e})")
+    return out
+
+
+def make_blog_breadth(breadth: dict, date_str: str, path: str):
+    """시장 폭 — 상승(위)·하락(아래) 종목 수 막대 + ADR(20) 선."""
+    n = len(breadth)
+    fig = plt.figure(figsize=BLOG_FIGSIZE, dpi=DPI)
+    fig.patch.set_facecolor(C["page"])
+    _blog_header(fig, "시장 폭 — 상승·하락 종목 수 · ADR(20)", date_str)
+    gs = fig.add_gridspec(n, 1, left=0.05, right=0.90, top=0.89, bottom=0.075,
+                          hspace=0.42)
+    for i, (label, df) in enumerate(breadth.items()):
+        d = df.tail(60)
+        x = np.arange(len(d))
+        ax = fig.add_subplot(gs[i])
+        ax.bar(x, d["상승"], 0.7, color=C["up"], label="상승")
+        ax.bar(x, -d["하락"], 0.7, color=C["down"], label="하락")
+        ax.axhline(0, color=C["axis"], lw=0.8)
+        _style_ax(ax)
+        ax.yaxis.tick_left()     # 오른쪽은 ADR 축
+        adr = d["ADR"].iloc[-1]
+        ax.set_title(label + (f"  ·  ADR(20) {adr:.0f}%" if pd.notna(adr) else ""),
+                     color=C["ink"], fontsize=13, weight="bold", loc="left", pad=6)
+        ax2 = ax.twinx()
+        ax2.plot(x, d["ADR"], color=C["ink"], lw=1.6, label="ADR(20)")
+        ax2.axhline(100, color=C["muted"], lw=0.8, ls="--")
+        ax2.tick_params(colors=C["ink"], labelsize=9, length=0)
+        for sp in ax2.spines.values():
+            sp.set_visible(False)
+        t = np.linspace(0, len(d) - 1, 6).astype(int)
+        ax.set_xticks(t)
+        ax.set_xticklabels([d.index[j].strftime("%m.%d") for j in t], fontsize=9)
+        ax.set_xlim(-1, len(d))
+        if i == 0:
+            h1, l1 = ax.get_legend_handles_labels()
+            h2, l2 = ax2.get_legend_handles_labels()
+            # 범례는 막대와 겹치지 않게 차트 위 오른쪽
+            ax.legend(h1 + h2, l1 + l2, loc="lower right", bbox_to_anchor=(1, 1),
+                      fontsize=9, ncols=3, frameon=False, labelcolor=C["ink2"],
+                      borderaxespad=0.2)
+    fig.savefig(path, facecolor=C["page"])
+    plt.close(fig)
 
 
 def run_chart(sample: bool = False, post: bool = False,
@@ -1663,7 +1784,17 @@ def run_chart(sample: bool = False, post: bool = False,
         except Exception as e:
             print(f"(휴장일 체크 실패, 계속 진행: {e})")
 
+    # 매달 첫 실행: 지난 판단 적중률로 지표 가중치 갱신 (실데이터 실행만)
+    report = None
+    if not sample:
+        try:
+            from .feedback import monthly_update
+            report = monthly_update(f"{now:%Y-%m}")
+        except Exception as e:
+            print(f"  (가중치 갱신 실패: {e})")
+
     flows_long = _load_flows(sample) if with_kr else None
+    flows_kq = _load_flows(sample, "KOSDAQ") if with_kr else None
     weights = load_weights()
     if weights:
         print(f"[chart] 지표 가중치 적용: {weights}")
@@ -1686,8 +1817,9 @@ def run_chart(sample: bool = False, post: bool = False,
 
         sigs_d = (daily_signal_set(df) + sig_macd(df, "일봉")
                   + sig_rsi_signal(df, "일봉") + sig_divergence(div_d, "일봉"))
-        if meta.get("krx") == "KOSPI" and flows_long is not None:
-            sigs_d += signals_flows(flows_long.tail(15))
+        fl = {"KOSPI": flows_long, "KOSDAQ": flows_kq}.get(meta.get("krx"))
+        if fl is not None:
+            sigs_d += signals_flows(fl.tail(15))
         sigs_w = (weekly_signal_set(dfw) + sig_macd(dfw, "주봉")
                   + sig_rsi_signal(dfw, "주봉") + sig_divergence(div_w, "주봉"))
 
@@ -1719,23 +1851,40 @@ def run_chart(sample: bool = False, post: bool = False,
     suffix = "" if market == "all" else f"_{market}"
     blog_dir = os.path.join(OUT, f"blog_{now:%Y%m%d}{suffix}")
     os.makedirs(blog_dir, exist_ok=True)
-    fx_rows = []
+    fx_rows, macro_rows, breadth = [], [], {}
     if with_kr:
-        print("[chart] 환율·매크로 수집 중...")
+        print("[chart] 환율·금리 · 시장 폭 수집 중...")
         fx_rows = fetch_fx(sample)
-    if fx_rows:
-        log_fx(now, fx_rows)
+        breadth = _load_breadth(sample)
+    if market in ("all", "us"):
+        print("[chart] 미국 금리 · 원자재 수집 중...")
+        macro_rows = fetch_fx(sample, MACRO_SERIES)
+    if fx_rows or macro_rows:
+        log_fx(now, fx_rows + macro_rows)
     img_names: dict = {}
     img_no = 1
-    if flows_long is not None and len(flows_long) > 40:
-        fn = f"{img_no:02d}_코스피_수급_2년.png"
-        make_blog_flows(flows_long, date_str, os.path.join(blog_dir, fn))
-        img_names["flows"] = fn
+    for key, fl, label in (("flows", flows_long, "코스피"),
+                           ("flows_kq", flows_kq, "코스닥")):
+        if fl is not None and len(fl) > 40:
+            fn = f"{img_no:02d}_{label}_수급_2년.png"
+            make_blog_flows(fl, date_str, os.path.join(blog_dir, fn), label)
+            img_names[key] = fn
+            img_no += 1
+    if breadth:
+        fn = f"{img_no:02d}_시장폭.png"
+        make_blog_breadth(breadth, date_str, os.path.join(blog_dir, fn))
+        img_names["breadth"] = fn
         img_no += 1
     if fx_rows:
         fn = f"{img_no:02d}_환율_매크로.png"
         make_blog_fx(fx_rows, date_str, os.path.join(blog_dir, fn))
         img_names["fx"] = fn
+        img_no += 1
+    if macro_rows:
+        fn = f"{img_no:02d}_금리_원자재.png"
+        make_blog_fx(macro_rows, date_str, os.path.join(blog_dir, fn),
+                     "금리·원자재")
+        img_names["macro"] = fn
         img_no += 1
     for r in rows:
         name = r["meta"]["name"]
@@ -1746,7 +1895,9 @@ def run_chart(sample: bool = False, post: bool = False,
             img_names[(name, tf, "trend")] = fn
             img_no += 1
     blog_txt = build_blog_text(now, rows, flows_long, img_names, fx_rows,
-                               market)
+                               market, extra={"flows_kq": flows_kq,
+                                              "breadth": breadth,
+                                              "macro": macro_rows})
     with open(os.path.join(blog_dir, "본문.txt"), "w", encoding="utf-8") as f:
         f.write(blog_txt)
     write_summary(blog_dir, now, rows, fx_rows, flows_long, market)
@@ -1769,5 +1920,19 @@ def run_chart(sample: bool = False, post: bool = False,
         elif not dry:
             raise RuntimeError("NOTION_TOKEN이 없어 노션에 올리지 못했습니다 — "
                                ".env 또는 GitHub Secrets를 확인하세요")
+        # 5거래일 지난 페이지 피드백 자동 기록 + 월간 적중률 리포트 (실패해도 계속)
+        try:
+            from .feedback import feedback_props, report_text, verdict_results
+            from .notion import publish_report, update_feedback
+            names = [r["meta"]["name"] for r in rows]
+            res = {d: feedback_props(v)
+                   for d, v in verdict_results(names).items()}
+            update_feedback(MARKET_LABEL.get(market), res)
+            if report and not report["accuracy"].empty:   # 결과가 쌓인 달만
+                rurl = publish_report(f"{report['month']} 적중률 리포트",
+                                      report_text(report))
+                print(f"[notion] 월간 적중률 리포트: {rurl}")
+        except Exception as e:
+            print(f"  (피드백 기록 실패: {type(e).__name__}: {e})")
 
     return images
