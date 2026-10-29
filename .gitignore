@@ -1,0 +1,10 @@
+# 비밀 정보 — 절대 커밋 금지
+.env
+
+# 실행 산출물
+output/
+__pycache__/
+*.pyc
+.watchlist_cache.json
+
+# (history/ 는 판단 아카이브라 커밋 대상 — 제외하지 않음)

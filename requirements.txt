@@ -1,0 +1,10 @@
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.26
+matplotlib>=3.8
+requests>=2.31
+pykrx>=1.0.51
+squarify>=0.4
+python-dotenv>=1.0
+feedparser>=6.0
+finance-datareader>=0.9
