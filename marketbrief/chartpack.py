@@ -1523,21 +1523,14 @@ def build_blog_text(now: dt.datetime, rows: list[dict],
                  f"일봉 {r['vd']} / 주봉 {r['vw']}")
     L.append("")
 
-    # 다가오는 경제지표 (7일) — 인베스팅닷컴 미국·한국 별 3개, 못 받으면 수동 목록
+    # 다가오는 경제지표 (오늘부터 7일, config.ECON_CALENDAR)
     today = dt.datetime.now(KST).date()
     lines = []
-    for when, flag, name in sorted(extra.get("events") or [],
-                                   key=lambda e: e[0] or dt.datetime.max):
-        if when is None:
-            continue
-        hm = "" if when.time() == dt.time() else f" {when:%H:%M}"
-        lines.append(f"· {when:%m/%d} ({WEEKDAY_KO[when.weekday()]}){hm} "
-                     f"{flag + ' ' if flag else ''}{name}")
-    if not extra.get("events"):
-        lines = [f"· {d:%m/%d} ({WEEKDAY_KO[d.weekday()]}) {name}"
-                 for d, name in sorted(
-                     (dt.date.fromisoformat(d), name) for d, name, *_ in ECON_CALENDAR)
-                 if today <= d <= today + dt.timedelta(days=7)]
+    for d, hm, flag, name in sorted(ECON_CALENDAR):
+        day = dt.date.fromisoformat(d)
+        if today <= day <= today + dt.timedelta(days=7):
+            lines.append(f"· {day:%m/%d} ({WEEKDAY_KO[day.weekday()]})"
+                         f"{' ' + hm if hm else ''} {flag} {name}")
     if lines:
         L.append("■ 다가오는 경제지표")
         L.extend(lines)
@@ -1871,11 +1864,6 @@ def run_chart(sample: bool = False, post: bool = False,
         macro_rows = fetch_fx(sample, MACRO_SERIES)
     if fx_rows or macro_rows:
         log_fx(now, fx_rows + macro_rows)
-    events = []
-    if not sample:
-        from .econcal import fetch_events
-        today = dt.datetime.now(KST).date()
-        events = fetch_events(today, today + dt.timedelta(days=7))
     img_names: dict = {}
     img_no = 1
     for key, fl, label in (("flows", flows_long, "코스피"),
@@ -1912,8 +1900,7 @@ def run_chart(sample: bool = False, post: bool = False,
     blog_txt = build_blog_text(now, rows, flows_long, img_names, fx_rows,
                                market, extra={"flows_kq": flows_kq,
                                               "breadth": breadth,
-                                              "macro": macro_rows,
-                                              "events": events})
+                                              "macro": macro_rows})
     with open(os.path.join(blog_dir, "본문.txt"), "w", encoding="utf-8") as f:
         f.write(blog_txt)
     write_summary(blog_dir, now, rows, fx_rows, flows_long, market)
