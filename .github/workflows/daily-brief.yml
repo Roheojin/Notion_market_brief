@@ -1,14 +1,20 @@
 name: notion-market-brief
 
-# 노션 마켓 브리핑 — 아침 차트 분석을 노션에 자동 게시 (인스타그램 없음)
-# 위치: 저장소의 .github/workflows/daily-brief.yml  (setup_github.bat이 옮겨 줍니다)
+# 노션 마켓 브리핑 — 한국장 · 미국장 마감 종가 기준 차트 분석을 각각 노션에 게시
 
 on:
   schedule:
-    # 아침 06:20 KST (= 전일 21:20 UTC): 미국장 마감 + 전일 코스피, 화~토
+    # 한국장: 평일 20:40 KST (= 11:40 UTC) — 15:30 종가 + 애프터마켓(~20:00) 뒤 확정 수급
+    - cron: "40 11 * * 1-5"
+    # 미국장: 화~토 06:20 KST (= 전일 21:20 UTC) — 미국장 마감 직후
     - cron: "20 21 * * 1-5"
   workflow_dispatch:      # Actions 탭의 "Run workflow" 버튼
     inputs:
+      market:
+        description: "시장 (kr=한국장, us=미국장, both=둘 다)"
+        type: choice
+        options: [both, kr, us]
+        default: both
       force:
         description: "휴장일 체크 무시 (테스트용)"
         type: boolean
@@ -41,7 +47,12 @@ jobs:
           KRX_PW: ${{ secrets.KRX_PW }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py --session chart --post ${{ inputs.force && '--force' || '' }}
+          MARKETS: ${{ github.event_name == 'schedule' && (github.event.schedule == '40 11 * * 1-5' && 'kr' || 'us') || (inputs.market == 'both' && 'kr us' || inputs.market) }}
+          FORCE: ${{ inputs.force && '--force' || '' }}
+        run: |
+          for m in $MARKETS; do
+            python main.py --session chart --market "$m" --post $FORCE
+          done
 
       - name: 지표 로그 · 수급 캐시 커밋
         if: always()

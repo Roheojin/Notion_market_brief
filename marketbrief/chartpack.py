@@ -53,6 +53,10 @@ COL_TENKAN = "#e0507a"   # 전환선 (장미)
 COL_KIJUN = "#3d5aa8"    # 기준선 (남청)
 COL_CHIKOU = "#8a8880"   # 후행스팬 (회색)
 
+MARKET_LABEL = {"kr": "한국장", "us": "미국장"}
+# 실행 시장별 지수 묶음 (니케이는 한국장과 같은 시각 마감, 비트코인은 미국장 마감 시점)
+MARKET_GROUP = {"kr": ("KR", "JP"), "us": ("US", "CRYPTO")}
+
 CATEGORIES = ["이평선", "일목", "볼린저", "RSI", "MACD", "거래량", "수급"]
 
 HASHTAGS_CHART = ("#차트분석 #기술적분석 #코스피 #나스닥100 #S&P500 "
@@ -883,6 +887,8 @@ FX_SERIES = [
      "unit": "pt", "base": 104.0},
     {"ticker": "^TNX",     "name": "미 10년물", "fmt": "{:.2f}%",
      "unit": "%p", "scale": 0.1, "base": 42.0},
+    {"ticker": "JPYKRW=X", "name": "원/엔(100엔)", "fmt": "{:,.1f}원",
+     "unit": "원", "scale": 100, "base": 9.4},
 ]
 FX_DAYS = 520   # 약 2년
 FX_LOG = os.path.join(HIST_DIR, "fx_log.csv")
@@ -906,10 +912,10 @@ def fetch_fx(sample: bool = False) -> list[dict]:
 
 
 def make_blog_fx(fx_rows: list[dict], date_str: str, path: str):
-    """원/달러 · 달러인덱스 · 미 10년물 — 2년 흐름 + 20/60일선."""
+    """원/달러 · 달러인덱스 · 미 10년물 · 원/엔 — 2년 흐름 + 20/60일선."""
     fig = plt.figure(figsize=BLOG_FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor(C["page"])
-    _blog_header(fig, "환율·매크로 흐름 — 원/달러 · 달러인덱스 · 미 10년물",
+    _blog_header(fig, "환율·매크로 흐름 — 원/달러 · 달러인덱스 · 미 10년물 · 원/엔",
                  date_str)
     n = len(fx_rows)
     gs = fig.add_gridspec(n, 1, left=0.05, right=0.90, top=0.89, bottom=0.075,
@@ -978,6 +984,11 @@ def _fx_state(fx_rows: list[dict],
             trend = "달러 강세" if v > v20 else "달러 약세"
             lines.append(f"달러인덱스는 {meta['fmt'].format(v)} "
                          f"(20일 {((v / v20) - 1) * 100:+.1f}%) — {trend} 흐름, "
+                         f"1년 레인지 내 {pos:.0f}% 수준입니다.")
+        elif name == "원/엔(100엔)":
+            trend = "엔화 강세(환율 상승)" if v > v20 else "엔화 약세(환율 하락)"
+            lines.append(f"원/엔(100엔)은 {meta['fmt'].format(v)} "
+                         f"(20일 {v - v20:+.1f}원) — {trend} 흐름, "
                          f"1년 레인지 내 {pos:.0f}% 수준입니다.")
         elif name == "미 10년물":
             tnx_d20 = v - v20
@@ -1402,16 +1413,27 @@ def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str):
 def build_blog_text(now: dt.datetime, rows: list[dict],
                     flows_long: pd.DataFrame | None,
                     img_names: dict,
-                    fx_rows: list[dict] | None = None) -> str:
-    """네이버 블로그 붙여넣기용 본문. 《이미지 n》 자리에 해당 파일을 넣으면 됩니다."""
+                    fx_rows: list[dict] | None = None,
+                    market: str = "all") -> str:
+    """노션 게시용 본문. 《이미지 n》 자리에 해당 파일이 들어갑니다."""
     date_str = f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]})"
+    names = "·".join(r["meta"]["name"] for r in rows)
     L: list[str] = []
-    L.append(f"[제목 제안] {now:%Y.%m.%d} 코스피·나스닥100·S&P500 차트 분석 — "
-             "환율 흐름과 일목·이평·볼린저·RSI·MACD (일봉/주봉)")
+    L.append(f"[제목 제안] {now:%Y.%m.%d} {names} 차트 분석 — "
+             + ("환율 흐름과 " if fx_rows else "")
+             + "일목·이평·볼린저·RSI·MACD (일봉/주봉)")
     L.append("")
-    L.append(f"{date_str} 미국장 마감 기준으로 나스닥100·S&P500, "
-             "그리고 전일 마감한 코스피 차트를 일봉·주봉으로 살펴봅니다. "
-             "환율·매크로 흐름이 수급에 미치는 영향도 함께 짚습니다.")
+    if market == "kr":
+        L.append(f"{date_str} 한국장 마감 종가 기준으로 {names} 차트를 "
+                 "일봉·주봉으로 살펴봅니다. "
+                 "환율·매크로 흐름이 수급에 미치는 영향도 함께 짚습니다.")
+    elif market == "us":
+        L.append(f"{date_str} 미국장 마감 종가 기준으로 {names} 차트를 "
+                 "일봉·주봉으로 살펴봅니다.")
+    else:
+        L.append(f"{date_str} 미국장 마감 기준으로 나스닥100·S&P500, "
+                 "그리고 전일 마감한 코스피 차트를 일봉·주봉으로 살펴봅니다. "
+                 "환율·매크로 흐름이 수급에 미치는 영향도 함께 짚습니다.")
     L.append("지표는 이동평균선(5/20/60/120), 일목균형표(전환선·기준선·구름대·후행스팬), "
              "볼린저밴드(20,2σ), RSI(14, 시그널 9), MACD(12,26,9), 거래량만 사용합니다.")
     L.append("")
@@ -1538,8 +1560,9 @@ def build_chart_caption(now: dt.datetime, rows: list[dict],
 
 def write_summary(blog_dir: str, now: dt.datetime, rows: list[dict],
                   fx_rows: list[dict] | None,
-                  flows_long: pd.DataFrame | None) -> dict:
-    """그날의 판단·수치를 블로그 팩에 summary.json으로 저장."""
+                  flows_long: pd.DataFrame | None,
+                  market: str = "all") -> dict:
+    """그날의 판단·수치를 팩에 summary.json으로 저장."""
     indices = []
     for r in rows:
         df = r["df"]
@@ -1572,7 +1595,10 @@ def write_summary(blog_dir: str, now: dt.datetime, rows: list[dict],
         fx_flow = "부합" if (krw_d20 < 0) == (f20 > 0) else "엇갈림"
     summary = {
         "date": f"{now:%Y-%m-%d}",
-        "title": f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]}) 차트 분석",
+        "title": (f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]}) "
+                  + (f"{MARKET_LABEL[market]} " if market in MARKET_LABEL
+                     else "") + "차트 분석"),
+        "market": MARKET_LABEL.get(market),
         "indices": indices, "fx": fx, "foreign_20d": f20, "fx_flow": fx_flow,
     }
     with open(os.path.join(blog_dir, "summary.json"), "w",
@@ -1601,21 +1627,26 @@ def _load_flows(sample: bool) -> pd.DataFrame | None:
 
 
 def run_chart(sample: bool = False, post: bool = False,
-              force: bool = False) -> list[str]:
+              force: bool = False, market: str = "all") -> list[str]:
+    """market: "kr"(한국장 마감 — 코스피·니케이·수급·환율), "us"(미국장 마감 —
+    나스닥100·S&P500·비트코인), "all"(전부 한 페이지)."""
     os.makedirs(OUT, exist_ok=True)
     now = dt.datetime.now(KST)
-    tag = f"{now:%Y%m%d}_chart"
-    date_str = f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]})"
     get_daily = sample_daily if sample else fetch_daily
     fetch_days = CHART_PARAMS["fetch_days"]
+    metas = [m for m in CHART_INDICES
+             if market == "all" or m["market"] in MARKET_GROUP[market]]
+    with_kr = market in ("all", "kr")
 
-    # ── 휴장일 체크: 미국 앵커(S&P500)의 최신 봉이 어제 이상이어야 ──
+    # ── 휴장일 체크: 한국장은 코스피 오늘 봉, 그 외는 S&P500 어제 이상 봉 ──
     if not sample and not force:
         try:
-            ref = get_daily("^GSPC", 30)
+            anchor, lag = ("^KS11", 0) if market == "kr" else ("^GSPC", 1)
+            ref = get_daily(anchor, 30)
             last_date = ref.index[-1].date()
-            if last_date < now.date() - dt.timedelta(days=1):
-                msg = (f"[차트 분석] 미국장 최신 일봉이 아직 없어 스킵합니다 "
+            if last_date < now.date() - dt.timedelta(days=lag):
+                label = MARKET_LABEL.get(market, "미국장")
+                msg = (f"[차트 분석] {label} 최신 일봉이 아직 없어 스킵합니다 "
                        f"(최신: {last_date}) — 휴장일이거나 마감 전입니다. "
                        f"테스트는 --force를 쓰세요")
                 print(msg)
@@ -1625,13 +1656,13 @@ def run_chart(sample: bool = False, post: bool = False,
         except Exception as e:
             print(f"(휴장일 체크 실패, 계속 진행: {e})")
 
-    flows_long = _load_flows(sample)
+    flows_long = _load_flows(sample) if with_kr else None
     weights = load_weights()
     if weights:
         print(f"[chart] 지표 가중치 적용: {weights}")
 
     rows: list[dict] = []
-    for meta in CHART_INDICES:
+    for meta in metas:
         print(f"[chart] {meta['name']} ({meta['ticker']}) 분석 중...")
         try:
             df = add_indicators(get_daily(meta["ticker"], fetch_days))
@@ -1662,17 +1693,29 @@ def run_chart(sample: bool = False, post: bool = False,
         print(f"  -> 일봉 {row['vd']} ({sc_d:+.1f}) · 주봉 {row['vw']} "
               f"({sc_w:+.1f}), 신호 {len(sigs_d)}+{len(sigs_w)}개")
 
-        log_chart(now, meta["name"], "일봉", sigs_d, float(df["close"].iloc[-1]))
-        log_chart(now, meta["name"], "주봉", sigs_w, float(dfw["close"].iloc[-1]))
-
     if not rows:
         raise SystemExit("분석에 성공한 지수가 없습니다.")
 
-    # ── 블로그 팩 (output/blog_YYYYMMDD/) — 환율 흐름 포함, 별도 로직 ──
-    blog_dir = os.path.join(OUT, f"blog_{now:%Y%m%d}")
+    # 시장별 실행은 그 시장의 거래일(마지막 봉 날짜)을 페이지·로그 날짜로
+    if market != "all":
+        main = [r for r in rows if r["meta"]["market"] in ("KR", "US")] or rows
+        day = max(r["df"].index[-1].date() for r in main)
+        now = dt.datetime.combine(day, now.timetz())
+    date_str = f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]})"
+    for r in rows:
+        log_chart(now, r["meta"]["name"], "일봉", r["sigs_d"],
+                  float(r["df"]["close"].iloc[-1]))
+        log_chart(now, r["meta"]["name"], "주봉", r["sigs_w"],
+                  float(r["dfw"]["close"].iloc[-1]))
+
+    # ── 팩 (output/blog_YYYYMMDD[_kr|_us]/) — 환율 흐름은 한국장에만 ──
+    suffix = "" if market == "all" else f"_{market}"
+    blog_dir = os.path.join(OUT, f"blog_{now:%Y%m%d}{suffix}")
     os.makedirs(blog_dir, exist_ok=True)
-    print("[chart] 환율·매크로 수집 중... (블로그 전용)")
-    fx_rows = fetch_fx(sample)
+    fx_rows = []
+    if with_kr:
+        print("[chart] 환율·매크로 수집 중...")
+        fx_rows = fetch_fx(sample)
     if fx_rows:
         log_fx(now, fx_rows)
     img_names: dict = {}
@@ -1695,10 +1738,11 @@ def run_chart(sample: bool = False, post: bool = False,
             make_blog_app(r, tf, date_str, os.path.join(blog_dir, fn))
             img_names[(name, tf, "trend")] = fn
             img_no += 1
-    blog_txt = build_blog_text(now, rows, flows_long, img_names, fx_rows)
+    blog_txt = build_blog_text(now, rows, flows_long, img_names, fx_rows,
+                               market)
     with open(os.path.join(blog_dir, "본문.txt"), "w", encoding="utf-8") as f:
         f.write(blog_txt)
-    write_summary(blog_dir, now, rows, fx_rows, flows_long)
+    write_summary(blog_dir, now, rows, fx_rows, flows_long, market)
     images = [os.path.join(blog_dir, fn) for fn in img_names.values()]
 
     print(f"\n[차트 분석] 블로그 팩 (이미지 {len(images)}장 + 본문) -> {blog_dir}")

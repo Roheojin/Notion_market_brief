@@ -112,8 +112,10 @@ PARAMS = {
 CHART_INDICES = [
     {"ticker": "^KS11", "name": "코스피",    "market": "KR", "currency": "pt",
      "krx": "KOSPI"},
+    {"ticker": "^N225", "name": "니케이225", "market": "JP", "currency": "pt"},
     {"ticker": "^NDX",  "name": "나스닥100", "market": "US", "currency": "pt"},
     {"ticker": "^GSPC", "name": "S&P 500",   "market": "US", "currency": "pt"},
+    {"ticker": "BTC-USD", "name": "비트코인", "market": "CRYPTO", "currency": "$"},
 ]
 
 CHART_PARAMS = {

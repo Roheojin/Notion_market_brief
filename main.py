@@ -460,6 +460,8 @@ if __name__ == "__main__":
     ap.add_argument("--sample", action="store_true", help="합성 데이터로 테스트")
     ap.add_argument("--post", action="store_true", help="인스타그램 자동 게시")
     ap.add_argument("--force", action="store_true", help="휴장일 체크 무시하고 실행")
+    ap.add_argument("--market", choices=["kr", "us", "all"], default="all",
+                    help="chart 세션: kr=한국장 마감, us=미국장 마감, all=전부")
     args = ap.parse_args()
 
     session = args.session
@@ -493,7 +495,7 @@ if __name__ == "__main__":
         elif session == "chart":
             from marketbrief.chartpack import run_chart
             cards_out = run_chart(sample=args.sample, post=args.post,
-                                  force=args.force)
+                                  force=args.force, market=args.market)
         else:
             cards_out = run(session=session, sample=args.sample,
                             post=args.post, force=args.force)
