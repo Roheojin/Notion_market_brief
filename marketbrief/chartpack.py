@@ -1410,110 +1410,117 @@ def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str):
     plt.close(fig)
 
 
+def _brief_lines(d: pd.DataFrame, unit: str) -> list[str]:
+    """지표별 한 줄 요약 (마지막 봉 기준)."""
+    last = d.iloc[-1]
+    c = float(last["close"])
+    L: list[str] = []
+    mas = [last[k] for k in ("ma5", "ma20", "ma60", "ma120")]
+    if all(pd.notna(m) for m in mas):
+        arr = ("정배열" if mas == sorted(mas, reverse=True)
+               else "역배열" if mas == sorted(mas) else "혼조")
+        L.append(f"· 이평 {arr} · 20{unit}선 이격 {(c / mas[1] - 1) * 100:+.1f}%")
+    a, b = last.get("senkou_a"), last.get("senkou_b")
+    if pd.notna(a) and pd.notna(b):
+        pos = ("구름 위" if c > max(a, b) else "구름 아래" if c < min(a, b)
+               else "구름 안")
+        tk = ("전환선>기준선" if last["tenkan"] > last["kijun"]
+              else "전환선<기준선")
+        L.append(f"· 일목 {pos} · {tk}")
+    up, dn = last.get("bb_up"), last.get("bb_dn")
+    if pd.notna(up) and pd.notna(dn) and up > dn:
+        L.append(f"· 볼린저 %b {(c - dn) / (up - dn) * 100:.0f}%")
+    if pd.notna(last.get("rsi")):
+        rel = ""
+        if pd.notna(last.get("rsi_sig")):
+            rel = " (시그널 위)" if last["rsi"] >= last["rsi_sig"] else " (시그널 아래)"
+        L.append(f"· RSI {last['rsi']:.1f}{rel}")
+    if pd.notna(last.get("macd")) and pd.notna(last.get("macd_sig")):
+        L.append("· MACD 시그널 " + ("위" if last["macd"] >= last["macd_sig"] else "아래")
+                 + " · 0선 " + ("위" if last["macd"] >= 0 else "아래"))
+    if pd.notna(last.get("vol_ratio")) and float(last["vol_ratio"]) > 0:
+        L.append(f"· 거래량 평균 {float(last['vol_ratio']):.1f}배")
+    return L
+
+
+def _fx_brief(fx_rows: list[dict], flows_long: pd.DataFrame | None) -> list[str]:
+    """환율·매크로 한 줄씩 + 환율-수급 부합 여부."""
+    L: list[str] = []
+    krw_d20 = None
+    for r in fx_rows:
+        meta, df = r["meta"], r["df"]
+        v = float(df["close"].iloc[-1])
+        v20 = float(df["close"].iloc[-21]) if len(df) > 21 else v
+        if meta["name"] == "원/달러":
+            krw_d20 = v - v20
+        d20 = (f"{(v / v20 - 1) * 100:+.1f}%" if meta["unit"] == "pt"
+               else f"{v - v20:+.2f}%p" if meta["unit"] == "%p"
+               else f"{v - v20:+.1f}원")
+        L.append(f"· {meta['name']} {meta['fmt'].format(v)} (20일 {d20})")
+    if krw_d20 is not None and flows_long is not None and len(flows_long) >= 20:
+        f20 = float(flows_long["외국인"].tail(20).sum()) / 1e4
+        match = (krw_d20 < 0) == (f20 > 0)
+        L.append(f"· 환율-수급 {'부합' if match else '엇갈림'} — 원화 "
+                 f"{'강세' if krw_d20 < 0 else '약세'}, 외국인 20일 {f20:+.2f}조")
+    return L
+
+
 def build_blog_text(now: dt.datetime, rows: list[dict],
                     flows_long: pd.DataFrame | None,
                     img_names: dict,
                     fx_rows: list[dict] | None = None,
                     market: str = "all") -> str:
-    """노션 게시용 본문. 《이미지 n》 자리에 해당 파일이 들어갑니다."""
-    date_str = f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]})"
-    names = "·".join(r["meta"]["name"] for r in rows)
-    L: list[str] = []
-    L.append(f"[제목 제안] {now:%Y.%m.%d} {names} 차트 분석 — "
-             + ("환율 흐름과 " if fx_rows else "")
-             + "일목·이평·볼린저·RSI·MACD (일봉/주봉)")
-    L.append("")
-    if market == "kr":
-        L.append(f"{date_str} 한국장 마감 종가 기준으로 {names} 차트를 "
-                 "일봉·주봉으로 살펴봅니다. "
-                 "환율·매크로 흐름이 수급에 미치는 영향도 함께 짚습니다.")
-    elif market == "us":
-        L.append(f"{date_str} 미국장 마감 종가 기준으로 {names} 차트를 "
-                 "일봉·주봉으로 살펴봅니다.")
-    else:
-        L.append(f"{date_str} 미국장 마감 기준으로 나스닥100·S&P500, "
-                 "그리고 전일 마감한 코스피 차트를 일봉·주봉으로 살펴봅니다. "
-                 "환율·매크로 흐름이 수급에 미치는 영향도 함께 짚습니다.")
-    L.append("지표는 이동평균선(5/20/60/120), 일목균형표(전환선·기준선·구름대·후행스팬), "
-             "볼린저밴드(20,2σ), RSI(14, 시그널 9), MACD(12,26,9), 거래량만 사용합니다.")
-    L.append("")
-
-    # 마감 요약
+    """노션 게시용 본문 (간결). 《이미지 n》 자리에 해당 파일이 들어갑니다."""
+    label = MARKET_LABEL.get(market, "")
+    L: list[str] = [f"{now:%Y.%m.%d} ({WEEKDAY_KO[now.weekday()]}) "
+                    f"{label + ' ' if label else ''}마감 종가 기준", ""]
     for r in rows:
-        meta, df = r["meta"], r["df"]
+        df = r["df"]
         close = float(df["close"].iloc[-1])
         chg = (close / float(df["close"].iloc[-2]) - 1) * 100
-        L.append(f"· {meta['name']} {_fmt_v(close)} ({chg:+.2f}%) — "
+        L.append(f"· {r['meta']['name']} {_fmt_v(close)} ({chg:+.2f}%) — "
                  f"일봉 {r['vd']} / 주봉 {r['vw']}")
     L.append("")
 
     img_no = 1
-    # 수급
     if flows_long is not None and len(flows_long) > 40:
         L.append(f"《이미지 {img_no} — {img_names['flows']}》")
         img_no += 1
+        L.append("■ 코스피 수급")
+        cum = flows_long[["외국인", "기관", "개인"]]
+        L.append("· 20일 " + " · ".join(
+            f"{a} {cum[a].tail(20).sum() / 1e4:+.2f}조" for a in cum.columns))
+        L.append("· 2년 " + " · ".join(
+            f"{a} {cum[a].sum() / 1e4:+.1f}조" for a in cum.columns))
         L.append("")
-        L.append("■ 코스피 수급 (2년 누적)")
-        L.extend(_flows_state(flows_long))
-        L.append("")
-
-    # 환율·매크로 흐름 (블로그 전용)
     if fx_rows:
         if "fx" in img_names:
             L.append(f"《이미지 {img_no} — {img_names['fx']}》")
             img_no += 1
-            L.append("")
-        L.append("■ 환율·매크로 흐름")
-        L.extend(_fx_state(fx_rows, flows_long))
+        L.append("■ 환율·매크로")
+        L.extend(_fx_brief(fx_rows, flows_long))
         L.append("")
 
     for r in rows:
-        meta = r["meta"]
-        name = meta["name"]
+        name = r["meta"]["name"]
         L.append(f"■ {name}")
-        L.append("")
         for tf in ("일봉", "주봉"):
             df = r["df"] if tf == "일봉" else r["dfw"]
             n = (CHART_PARAMS["daily_bars"] if tf == "일봉"
                  else CHART_PARAMS["weekly_bars"])
-            d = df.tail(n)
             unit = "일" if tf == "일봉" else "주"
             verdict = r["vd"] if tf == "일봉" else r["vw"]
-
             L.append(f"《이미지 {img_no} — {img_names[(name, tf, 'trend')]}》")
             img_no += 1
-            L.append("")
-            L.append(f"[{name} {tf} · 추세]")
-            L.extend(_ma_state(d, unit))
-            L.extend(_ichimoku_state(df, unit))
-            L.append("")
-            if (name, tf, "mom") in img_names:
-                L.append(f"《이미지 {img_no} — {img_names[(name, tf, 'mom')]}》")
-                img_no += 1
-                L.append("")
-            L.append(f"[{name} {tf} · 모멘텀]")
-            divs = r.get("div_d") if tf == "일봉" else r.get("div_w")
-            L.extend(_bb_state(d))
-            L.extend(_rsi_state(d, unit, divs))
-            L.extend(_macd_state(d))
-            L.extend(_vol_state(d, unit))
-            sigs = [s for s in (r["sigs_d"] if tf == "일봉" else r["sigs_w"])]
-            tops = _top_signals(sigs, 3)
+            L.append(f"[{tf} — {verdict}]")
+            L.extend(_brief_lines(df.tail(n), unit))
+            tops = _top_signals(r["sigs_d"] if tf == "일봉" else r["sigs_w"], 3)
             if tops:
-                L.append("포착 신호: "
-                         + " / ".join(f"{'▲' if s.direction > 0 else '▼' if s.direction < 0 else '●'}"
-                                      f"{s.title}" for s in tops))
-            L.append(f"→ {tf} 종합: {verdict}")
-            L.append("")
+                L.append("포착 신호: " + " / ".join(
+                    f"{'▲' if s.direction > 0 else '▼' if s.direction < 0 else '●'}"
+                    f"{s.title}" for s in tops))
         L.append("")
 
-    L.append("■ 정리")
-    for r in rows:
-        L.append(f"· {r['meta']['name']}: 일봉 {r['vd']} / 주봉 {r['vw']}")
-    L.append("")
-    L.append("지표별 판단은 매일 기록해 한 달 단위로 적중률을 검증하고, "
-             "잘 맞은 지표의 비중을 높이는 방식으로 개선해 갑니다.")
-    L.append("")
     L.append(DISCLAIMER)
     return "\n".join(L)
 

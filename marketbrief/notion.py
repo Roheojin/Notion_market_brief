@@ -9,7 +9,8 @@
                   다이버전스 · 원/달러 · 외국인 20일 순매수 · 환율-수급 부합 여부)
 
 데이터베이스는 부모 페이지 아래에 처음 한 번 자동으로 만들고(있으면 재사용),
-같은 날짜(·같은 시장) 페이지가 있으면 새 페이지를 만든 뒤 옛 페이지를 휴지통으로 보냅니다
+DB는 시장별로 따로(「차트 분석 아카이브 (한국장)」 · 「… (미국장)」) 둡니다.
+같은 날짜 페이지가 있으면 새 페이지를 만든 뒤 옛 페이지를 휴지통으로 보냅니다
 (재실행해도 중복 없음). '피드백' · '피드백 메모' 열은 월간 피드백에서 채웁니다.
 
 환경변수:
@@ -141,10 +142,7 @@ def _norm_id(s: str) -> str:
 
 def _schema(summary: dict) -> dict:
     v_opts = [{"name": n, "color": c} for n, c in VERDICTS]
-    props: dict = {"제목": {"title": {}}, "날짜": {"date": {}},
-                   "시장": {"select": {"options": [
-                       {"name": "한국장", "color": "red"},
-                       {"name": "미국장", "color": "blue"}]}}}
+    props: dict = {"제목": {"title": {}}, "날짜": {"date": {}}}
     div_opts = []
     for ix in summary.get("indices", []):
         n = ix["name"]
@@ -156,11 +154,13 @@ def _schema(summary: dict) -> dict:
             div_opts += [{"name": f"{n} {tf} 상승", "color": "red"},
                          {"name": f"{n} {tf} 하락", "color": "blue"}]
     props["다이버전스"] = {"multi_select": {"options": div_opts}}
-    props["원/달러"] = {"number": {"format": "number_with_commas"}}
-    props["원/달러 20일"] = {"number": {"format": "number"}}
-    props["외국인 20일(조)"] = {"number": {"format": "number"}}
-    props["환율-수급"] = {"select": {"options": [
-        {"name": "부합", "color": "green"}, {"name": "엇갈림", "color": "orange"}]}}
+    if summary.get("market") != "미국장":   # 환율·수급 열은 한국장(·통합)만
+        props["원/달러"] = {"number": {"format": "number_with_commas"}}
+        props["원/달러 20일"] = {"number": {"format": "number"}}
+        props["외국인 20일(조)"] = {"number": {"format": "number"}}
+        props["환율-수급"] = {"select": {"options": [
+            {"name": "부합", "color": "green"},
+            {"name": "엇갈림", "color": "orange"}]}}
     props["피드백"] = {"select": {"options": [
         {"name": "적중", "color": "green"}, {"name": "빗나감", "color": "red"},
         {"name": "보류", "color": "gray"}]}}
@@ -182,8 +182,6 @@ def _props(summary: dict, title_key: str) -> dict:
                                "text": {"content": summary["title"]}}]},
         "날짜": {"date": {"start": summary["date"]}},
     }
-    if summary.get("market"):
-        p["시장"] = {"select": {"name": summary["market"]}}
     divs: list[str] = []
     for ix in summary.get("indices", []):
         n = ix["name"]
@@ -347,15 +345,10 @@ def _ensure_schema(client, ds_id: str, schema: dict) -> str:
     return title_key
 
 
-def _same_day_pages(client, ds_id: str, date_str: str,
-                    market: str | None = None) -> list[str]:
-    """같은 날짜(시장이 있으면 같은 날짜 · 같은 시장) 페이지."""
-    flt = {"property": "날짜", "date": {"equals": date_str}}
-    if market:
-        flt = {"and": [flt, {"property": "시장",
-                             "select": {"equals": market}}]}
+def _same_day_pages(client, ds_id: str, date_str: str) -> list[str]:
     r = client.call("POST", f"/v1/data_sources/{ds_id}/query", {
-        "filter": flt, "page_size": 100,
+        "filter": {"property": "날짜", "date": {"equals": date_str}},
+        "page_size": 100,
     })
     return [p["id"] for p in r.get("results", [])
             if p.get("object") == "page" and not p.get("in_trash")]
@@ -413,6 +406,8 @@ def publish_pack(blog_dir: str, test: bool = False) -> str | None:
     if test:
         summary["title"] = "[테스트] " + summary["title"]
     db_title = TEST_DB_TITLE if test else DB_TITLE
+    if summary.get("market"):      # 시장별 DB: 「차트 분석 아카이브 (미국장)」
+        db_title += f" ({summary['market']})"
 
     client = _DryRun() if dry else _Client(token)
     try:
@@ -433,8 +428,7 @@ def publish_pack(blog_dir: str, test: bool = False) -> str | None:
                 print(f"  [notion] '{db_title}' 데이터베이스를 새로 만듭니다")
                 ds_id = _create_db(client, parent_id, db_title, schema)
         title_key = _ensure_schema(client, ds_id, schema)
-        old = _same_day_pages(client, ds_id, summary["date"],
-                              summary.get("market"))
+        old = _same_day_pages(client, ds_id, summary["date"])
 
         uploaded = [0]
 
