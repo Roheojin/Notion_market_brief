@@ -241,14 +241,15 @@ def log_chart(now: dt.datetime, name: str, tf: str, sigs: list[Signal],
 # 그리기 공통
 # ──────────────────────────────────────────────────────────────
 
-def _candles(ax, x, d, body_w=0.62, wick_w=1.0):
+def _candles(ax, x, d, body_w=0.62, wick_w=1.0, up_col=None, dn_col=None):
+    up_col, dn_col = up_col or C["up"], dn_col or C["down"]
     up = (d["close"] >= d["open"]).to_numpy()
     ax.vlines(x, d["low"], d["high"],
-              colors=np.where(up, C["up"], C["down"]), lw=wick_w, zorder=3)
+              colors=np.where(up, up_col, dn_col), lw=wick_w, zorder=3)
     ax.bar(x[up], (d["close"] - d["open"])[up], body_w, bottom=d["open"][up],
-           color=C["up"], zorder=4)
+           color=up_col, zorder=4)
     ax.bar(x[~up], (d["open"] - d["close"])[~up], body_w,
-           bottom=d["close"][~up], color=C["down"], zorder=4)
+           bottom=d["close"][~up], color=dn_col, zorder=4)
     return up
 
 
@@ -1099,6 +1100,7 @@ def make_blog_momentum(row: dict, tf: str, date_str: str, path: str):
 
 APP_FIGSIZE = (12.0, 15.0)    # 1200x1500 @ DPI 100
 APP = {
+    "candle_up": "#26a69a", "candle_dn": "#ef5350",   # 트레이딩뷰 양봉/음봉
     "ma5": "#F08A24", "ma20": "#1A1A1A", "ma60": "#4E6B3A", "ma120": "#3A9B7B",
     "tenkan": "#7F73A8", "kijun": "#A052B8",
     "span1": "#B5626B", "span2": "#5B84B8",
@@ -1284,7 +1286,8 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
                   zorder=4)
     ax_p.plot(x, d["tenkan"], color=APP["tenkan"], lw=0.8, zorder=4)
     ax_p.plot(x, d["kijun"], color=APP["kijun"], lw=0.8, zorder=4)
-    _candles(ax_p, x, d, body_w=0.7, wick_w=1.0)
+    _candles(ax_p, x, d, body_w=0.7, wick_w=1.0,
+             up_col=APP["candle_up"], dn_col=APP["candle_dn"])
     _app_tag(ax_p, close, f"{close:,.2f}\n{chg:+.2f}%", dcol,
              lambda t: f"{t:,.0f}", nlines=2)
 
@@ -1308,7 +1311,8 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
     ax_v.set_xlim(*xlim)
     if has_vol:
         upc = (d["close"] >= d["open"]).to_numpy()
-        ax_v.bar(x, vol, 0.7, color=np.where(upc, C["up"], C["down"]), zorder=3)
+        ax_v.bar(x, vol, 0.7, color=np.where(upc, APP["candle_up"],
+                                             APP["candle_dn"]), zorder=3)
         ax_v.set_ylim(0, np.nanmax(vol) * 1.35)
         _app_tag(ax_v, float(vol[-1]), _fmt_vol(float(vol[-1])), APP["tag_vol"],
                  _fmt_vol)
