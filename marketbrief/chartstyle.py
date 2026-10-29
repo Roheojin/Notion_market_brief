@@ -94,14 +94,18 @@ _C_TV = dict(_C_LIGHT, **{
     "down":    "#ef5350",
 })
 
-_THEMES = {"light": _C_LIGHT, "dark": _C_DARK, "tradingview": _C_TV}
+# 증권사 앱 스타일 — 흰 배경 + 국내 관례 색 (상승 빨강 / 하락 파랑)
+_C_APP = dict(_C_TV, **{"up": "#E05858", "down": "#4888E0"})
+
+_THEMES = {"light": _C_LIGHT, "dark": _C_DARK, "tradingview": _C_TV,
+           "app": _C_APP}
 
 THEME = os.environ.get("CARD_THEME", "light").lower()
 C = dict(_THEMES.get(THEME, _C_LIGHT))
 
 
 def set_theme(name: str):
-    """카드 테마 전환 (tradingview/light/dark)."""
+    """카드 테마 전환 (app/tradingview/light/dark)."""
     global THEME
     THEME = (name or "light").lower()
     C.clear()
@@ -132,7 +136,7 @@ def _style_ax(ax):
     ax.tick_params(colors=C["muted"], labelsize=9, length=3)
     ax.grid(True, color=C["grid"], linewidth=0.6, alpha=0.9)
     ax.set_axisbelow(True)
-    if THEME == "tradingview":
+    if THEME in ("tradingview", "app"):
         # 트레이딩뷰처럼 가격축은 오른쪽, 위·왼쪽 테두리 없음
         ax.spines["top"].set_visible(False)
         ax.spines["left"].set_visible(False)

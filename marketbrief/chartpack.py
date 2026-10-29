@@ -7,8 +7,8 @@
 남아 있지만, 노션 전용으로 바꿔서 실행 흐름에서는 쓰지 않습니다.
 
 블로그 팩 (output/blog_YYYYMMDD/):
-  붙여넣기용 본문 텍스트(지표별 상세 분석) + 고해상 차트 이미지(1600x900)
-  — 추세(이평·일목) / 모멘텀(볼린저·거래량·RSI·MACD) 분리, 일봉·주봉 각각
+  붙여넣기용 본문 텍스트(지표별 상세 분석) + 차트 이미지
+  — 증권사 앱 형식 1장(가격·이평·일목·BB·매물대 / 거래량 / MACD / RSI), 일봉·주봉 각각
 
 지표 판단 로그 (history/chart_log.csv):
   카테고리별 점수를 매일 축적 → 1달 주기로 적중률을 계산해
@@ -1093,6 +1093,303 @@ def make_blog_momentum(row: dict, tf: str, date_str: str, path: str):
     plt.close(fig)
 
 
+# ──────────────────────────────────────────────────────────────
+# 증권사 앱 형식 통합 차트 (가격+이평+일목+BB+매물대 / 거래량 / MACD / RSI)
+# ──────────────────────────────────────────────────────────────
+
+APP_FIGSIZE = (12.0, 15.0)    # 1200x1500 @ DPI 100
+APP = {
+    "ma5": "#F08A24", "ma20": "#3D6FC4", "ma60": "#4E6B3A", "ma120": "#3A9B7B",
+    "tenkan": "#7F73A8", "kijun": "#A052B8",
+    "span1": "#B5626B", "span2": "#5B84B8",
+    "cloud1": "#F0A8B0", "cloud2": "#A0C0F0",    # 선행1 위(빨강) / 선행2 위(파랑)
+    "bb_up": "#C4607A", "bb_dn": "#5B88C0",
+    "maemul": "#E0E0E0", "maemul_poc": "#9AA3AD", "maemul_txt": "#6E6E6E",
+    "macd": "#F08A24", "sig": "#587848", "osc_pos": "#4878E0", "osc_neg": "#507840",
+    "rsi": "#F08A24",
+    "tag_vol": "#606060", "tag_ind": "#F88000",
+    "tick": "#7A7A7A", "grid": "#EEEEEE", "sep": "#C8C8C8", "band": "#F2F2F2",
+    "band_txt": "#909090", "level": "#9A9A9A",
+}
+
+
+def _fmt_vol(v: float) -> str:
+    if abs(v) >= 1e9:
+        return f"{v / 1e9:,.2f}B"
+    if abs(v) >= 1e6:
+        return f"{v / 1e6:,.1f}M"
+    return f"{v / 1e3:,.0f}K"
+
+
+def _app_style(ax):
+    ax.set_facecolor("#ffffff")
+    for k, sp in ax.spines.items():
+        sp.set_visible(k in ("top", "bottom", "right"))
+        sp.set_color(APP["sep"])
+        sp.set_linewidth(1.0)
+    ax.yaxis.tick_right()
+    ax.tick_params(colors=APP["tick"], labelsize=10, length=0, pad=6)
+    ax.tick_params(axis="x", labelbottom=False)
+    ax.grid(True, color=APP["grid"], linewidth=0.8)
+    ax.set_axisbelow(True)
+
+
+def _app_tag(ax, y: float, text: str, color: str, fmt, nlines: int = 1):
+    """오른쪽 축 값 태그 + 태그·축 경계와 겹치는 눈금 숫자 숨김."""
+    ax.annotate(text, xy=(1, y), xycoords=("axes fraction", "data"),
+                xytext=(4, 0), textcoords="offset points", ha="left",
+                va="center", fontsize=10.5, color="#ffffff", zorder=9,
+                annotation_clip=False, linespacing=1.05,
+                bbox=dict(boxstyle="square,pad=0.3", facecolor=color,
+                          edgecolor="none"))
+    lo, hi = ax.get_ylim()
+    tag_gap = _pt_to_data(ax, 10.5 * (0.75 + 0.6 * nlines) + 6)
+    edge_gap = _pt_to_data(ax, 8)
+    ticks = [t for t in ax.get_yticks()
+             if lo + edge_gap <= t <= hi - edge_gap and abs(t - y) >= tag_gap]
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([fmt(t) for t in ticks])
+    ax.set_ylim(lo, hi)
+
+
+def _app_legend(fig, items, x0: float, x1: float, y0: float,
+                fontsize: float = 11.5) -> float:
+    """「-이름」을 색 글자로 이어 쓰고 폭을 넘으면 줄바꿈. 마지막 줄 아래 y 반환."""
+    r = fig.canvas.get_renderer()
+    lh = fontsize * 1.55 / 72 * fig.dpi / fig.bbox.height
+    gap = 6 / fig.bbox.width
+    x, y = x0, y0
+    for label, col in items:
+        t = fig.text(x, y, "-" + label, color=col, fontsize=fontsize, va="top")
+        w = t.get_window_extent(r).width / fig.bbox.width
+        if x > x0 and x + w > x1:
+            x, y = x0, y - lh
+            t.set_position((x, y))
+        x += w + gap
+    return y - lh
+
+
+def _pane_title(ax, items, fontsize: float = 10.5):
+    """패널 왼쪽 위 지표 이름 (색 글자)."""
+    fig = ax.figure
+    r = fig.canvas.get_renderer()
+    bb = ax.get_window_extent(r)
+    x = bb.x0 + 8
+    for label, col in items:
+        t = fig.text(x / fig.bbox.width, (bb.y1 - 6) / fig.bbox.height, label,
+                     color=col, fontsize=fontsize, va="top", zorder=9)
+        x += t.get_window_extent(r).width + 10
+
+
+def _cross_arrows(ax, x, a, b):
+    """선이 시그널선을 위로 뚫으면 ▲(아래), 아래로 뚫으면 ▼(위)."""
+    import matplotlib.transforms as mtrans
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    diff = a - b
+    ok = ~(np.isnan(diff[1:]) | np.isnan(diff[:-1]))
+    up = np.where(ok & (diff[:-1] <= 0) & (diff[1:] > 0))[0] + 1
+    dn = np.where(ok & (diff[:-1] >= 0) & (diff[1:] < 0))[0] + 1
+    below = mtrans.offset_copy(ax.transData, fig=ax.figure, y=-9, units="points")
+    above = mtrans.offset_copy(ax.transData, fig=ax.figure, y=9, units="points")
+    ax.scatter(x[up], a[up], marker="^", s=46, color=C["up"], zorder=8,
+               transform=below, linewidths=0)
+    ax.scatter(x[dn], a[dn], marker="v", s=46, color=C["down"], zorder=8,
+               transform=above, linewidths=0)
+
+
+def _level_label(ax, y: float, text: str):
+    ax.text(0.004, y, text, transform=ax.get_yaxis_transform(),
+            color=APP["level"], fontsize=10, va="center", ha="left", zorder=7)
+
+
+def make_blog_app(row: dict, tf: str, date_str: str, path: str):
+    """증권사 앱 차트 형식 1장 — 가격(이평 5/20/60/120 · 매물대 · 일목 · BB) /
+    거래량 / MACD / RSI, 시그널 교차 화살표 · 오른쪽 축 값 태그."""
+    meta = row["meta"]
+    df = row["df"] if tf == "일봉" else row["dfw"]
+    n = CHART_PARAMS["daily_bars"] if tf == "일봉" else CHART_PARAMS["weekly_bars"]
+    fwd = CHART_PARAMS["forward"]
+    ich = PARAMS["ichimoku"]
+    d = df.tail(n)
+    x = np.arange(len(d))
+    xlim = (-1, len(d) - 1 + fwd + 2)
+    close = float(d["close"].iloc[-1])
+    prev = float(df["close"].iloc[-2])
+    chg = (close / prev - 1) * 100
+    dcol = _dir_color(chg)
+
+    fig = plt.figure(figsize=APP_FIGSIZE, dpi=DPI)
+    fig.patch.set_facecolor("#ffffff")
+    L, R = 0.03, 0.865
+
+    # ── 헤더: 이름 / 현재가 · 등락률 ──
+    fig.text(L, 0.978, f"{meta['name']}  {tf}", color=C["ink"], fontsize=19,
+             weight="bold", va="top")
+    fig.text(L, 0.951, f"{close:,.2f}  {chg:+.2f}%", color=dcol, fontsize=19,
+             weight="bold", va="top")
+    fig.text(0.97, 0.951, f"{meta['ticker']} · {date_str}", color=APP["tick"],
+             fontsize=11, ha="right", va="top")
+
+    # ── 범례 (색 글자, 폭 넘으면 줄바꿈) ──
+    sh = ich["shift"]
+    legend = [("5", APP["ma5"]), ("20", APP["ma20"]), ("60", APP["ma60"]),
+              ("120", APP["ma120"]), ("매물대(10)", "#B0B0B0"),
+              (f"전환선({ich['kijun']},{ich['tenkan']},{sh},{ich['senkou_b']},{sh})",
+               APP["tenkan"]),
+              ("기준선", APP["kijun"]), ("선행스팬1", APP["span1"]),
+              ("선행스팬2", APP["span2"]),
+              (f"BB 상한({PARAMS['bb_period']},{PARAMS['bb_std']:.2f})", APP["bb_up"]),
+              ("BB 하한", APP["bb_dn"])]
+    top = _app_legend(fig, legend, L + 0.005, R, 0.915) - 0.004
+
+    gs = fig.add_gridspec(5, 1, height_ratios=[6.0, 0.42, 1.7, 1.7, 1.7],
+                          left=L, right=R, top=top, bottom=0.015, hspace=0.0)
+    ax_p = fig.add_subplot(gs[0])
+    ax_d = fig.add_subplot(gs[1])
+    ax_v = fig.add_subplot(gs[2])
+    ax_m = fig.add_subplot(gs[3])
+    ax_r = fig.add_subplot(gs[4])
+
+    # ── 가격 패널 ──
+    _app_style(ax_p)
+    a = d["senkou_a"].to_numpy(dtype=float)
+    b = d["senkou_b"].to_numpy(dtype=float)
+    fa, fb = _future_cloud(df, fwd)
+    xa = np.concatenate([x, np.arange(len(d), len(d) + len(fa))])
+    aa = np.concatenate([a, fa])
+    bb_ = np.concatenate([b, fb])
+    v = ~(np.isnan(aa) | np.isnan(bb_))
+    ax_p.fill_between(xa, aa, bb_, where=v & (aa >= bb_), color=APP["cloud1"],
+                      alpha=0.75, linewidth=0, interpolate=True, zorder=1)
+    ax_p.fill_between(xa, aa, bb_, where=v & (aa < bb_), color=APP["cloud2"],
+                      alpha=0.75, linewidth=0, interpolate=True, zorder=1)
+    ax_p.plot(xa, aa, color=APP["span1"], lw=1.0, zorder=2)
+    ax_p.plot(xa, bb_, color=APP["span2"], lw=1.0, zorder=2)
+
+    lo_p = float(np.nanmin(np.concatenate([d["low"], a, b, fa, fb,
+                                           d["bb_dn"].dropna()])))
+    hi_p = float(np.nanmax(np.concatenate([d["high"], a, b, fa, fb,
+                                           d["bb_up"].dropna()])))
+    span = (hi_p - lo_p) or 1.0
+    ax_p.set_xlim(*xlim)
+    ax_p.set_ylim(lo_p - span * 0.05, hi_p + span * 0.06)
+
+    # 매물대 — 표시 구간 거래량을 종가 기준 가격대 10칸으로 (POC는 진하게)
+    vol = d["volume"].to_numpy(dtype=float)
+    has_vol = np.isfinite(vol).any() and np.nanmax(vol) > 0
+    if has_vol:
+        edges = np.linspace(float(d["low"].min()), float(d["high"].max()), 11)
+        idx = np.clip(np.searchsorted(edges, d["close"].to_numpy(dtype=float),
+                                      side="right") - 1, 0, 9)
+        tot = np.bincount(idx, weights=np.nan_to_num(vol), minlength=10)
+        pct = tot / tot.sum() * 100 if tot.sum() > 0 else tot
+        full = (xlim[1] - xlim[0]) * 0.72
+        poc = int(np.argmax(pct))
+        h = (edges[1] - edges[0]) * 0.72
+        for k in range(10):
+            if pct[k] <= 0:
+                continue
+            w = full * pct[k] / pct.max()
+            yc = (edges[k] + edges[k + 1]) / 2
+            ax_p.barh(yc, w, height=h, left=xlim[0],
+                      color=APP["maemul_poc"] if k == poc else APP["maemul"],
+                      alpha=0.55 if k == poc else 0.7, zorder=1.5, linewidth=0)
+            t = ax_p.text(xlim[0] + w, yc, f"{pct[k]:.2f}%", ha="right",
+                          va="center", fontsize=10.5, color=APP["maemul_txt"],
+                          zorder=7)
+            # 막대가 글자보다 짧으면 막대 오른쪽에 (차트 왼쪽 밖으로 안 나가게)
+            r = fig.canvas.get_renderer()
+            if t.get_window_extent(r).x0 < ax_p.get_window_extent(r).x0:
+                t.set_ha("left")
+                t.set_x(xlim[0] + w + (xlim[1] - xlim[0]) * 0.004)
+
+    ax_p.plot(x, d["bb_up"], color=APP["bb_up"], lw=1.4, zorder=3)
+    ax_p.plot(x, d["bb_dn"], color=APP["bb_dn"], lw=1.4, zorder=3)
+    for key in ("ma5", "ma20", "ma60", "ma120"):
+        ax_p.plot(x, d[key], color=APP[key], lw=1.2, zorder=4)
+    ax_p.plot(x, d["tenkan"], color=APP["tenkan"], lw=1.2, zorder=4)
+    ax_p.plot(x, d["kijun"], color=APP["kijun"], lw=1.4, zorder=4)
+    _candles(ax_p, x, d, body_w=0.7, wick_w=1.0)
+    _app_tag(ax_p, close, f"{close:,.2f}\n{chg:+.2f}%", dcol,
+             lambda t: f"{t:,.0f}", nlines=2)
+
+    # ── 날짜 띠 ──
+    ax_d.set_facecolor(APP["band"])
+    for sp in ax_d.spines.values():
+        sp.set_visible(False)
+    ax_d.set_xlim(*xlim)
+    ax_d.set_ylim(0, 1)
+    ax_d.set_xticks([])
+    ax_d.set_yticks([])
+    fmt = "%m.%d" if tf == "일봉" else "%y.%m"
+    for i in np.linspace(0, len(d) - 1, 5).astype(int)[:-1]:
+        ax_d.text(i, 0.5, d.index[i].strftime(fmt), color=APP["band_txt"],
+                  fontsize=11, va="center", ha="left")
+    ax_d.text(len(d) - 1, 0.5, d.index[-1].strftime(fmt), color=APP["band_txt"],
+              fontsize=11, va="center", ha="center")
+
+    # ── 거래량 ──
+    _app_style(ax_v)
+    ax_v.set_xlim(*xlim)
+    if has_vol:
+        upc = (d["close"] >= d["open"]).to_numpy()
+        ax_v.bar(x, vol, 0.7, color=np.where(upc, C["up"], C["down"]), zorder=3)
+        ax_v.set_ylim(0, np.nanmax(vol) * 1.35)
+        _app_tag(ax_v, float(vol[-1]), _fmt_vol(float(vol[-1])), APP["tag_vol"],
+                 _fmt_vol)
+    else:
+        ax_v.set_yticks([])
+        ax_v.text(0.5, 0.45, "지수 거래량 데이터 미제공", color=APP["tick"],
+                  fontsize=11, ha="center", va="center", transform=ax_v.transAxes)
+
+    # ── MACD ──
+    _app_style(ax_m)
+    ax_m.set_xlim(*xlim)
+    hh = d["macd_hist"].to_numpy(dtype=float)
+    ax_m.bar(x, hh, 0.7, color=np.where(hh >= 0, APP["osc_pos"], APP["osc_neg"]),
+             zorder=3)
+    ax_m.axhline(0, color=APP["level"], lw=0.9, zorder=2)
+    ax_m.plot(x, d["macd"], color=APP["macd"], lw=1.4, zorder=4)
+    ax_m.plot(x, d["macd_sig"], color=APP["sig"], lw=1.2, zorder=4)
+    _cross_arrows(ax_m, x, d["macd"], d["macd_sig"])
+    mv = np.concatenate([d["macd"].dropna(), d["macd_sig"].dropna(),
+                         d["macd_hist"].dropna(), [0.0]])
+    mlo, mhi = float(mv.min()), float(mv.max())
+    msp = (mhi - mlo) or 1.0
+    ax_m.set_ylim(mlo - msp * 0.18, mhi + msp * 0.42)
+    _level_label(ax_m, 0, "0.0")
+    mval = float(d["macd"].iloc[-1])
+    _app_tag(ax_m, mval, f"{mval:,.2f}", APP["tag_ind"], lambda t: f"{t:,.0f}"
+             if msp >= 10 else f"{t:,.2f}")
+
+    # ── RSI ──
+    _app_style(ax_r)
+    ax_r.set_xlim(*xlim)
+    for lv in (70, 30):
+        ax_r.axhline(lv, color=APP["level"], lw=0.9, zorder=2)
+        _level_label(ax_r, lv, f"{lv:.1f}")
+    ax_r.plot(x, d["rsi"], color=APP["rsi"], lw=1.4, zorder=4)
+    ax_r.plot(x, d["rsi_sig"], color=APP["sig"], lw=1.2, zorder=4)
+    _cross_arrows(ax_r, x, d["rsi"], d["rsi_sig"])
+    ax_r.set_ylim(0, 118)
+    ax_r.set_yticks([20, 40, 60, 80])
+    rval = float(d["rsi"].iloc[-1])
+    _app_tag(ax_r, rval, f"{rval:.2f}", APP["tag_ind"], lambda t: f"{t:.2f}")
+
+    # ── 패널 이름 (색 글자) ──
+    _pane_title(ax_v, [("거래량", C["ink"])])
+    _pane_title(ax_m, [(f"-MACD+({PARAMS['macd_fast']},{PARAMS['macd_slow']})",
+                        APP["macd"]),
+                       (f"-Signal({PARAMS['macd_signal']})", APP["sig"]),
+                       ("-OSC", APP["osc_pos"])])
+    _pane_title(ax_r, [(f"-RSI({PARAMS['rsi_period']})", APP["rsi"]),
+                       (f"-Signal({PARAMS['rsi_signal']})", APP["sig"])])
+
+    fig.savefig(path, facecolor="#ffffff")
+    plt.close(fig)
+
+
 def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str):
     fig = plt.figure(figsize=BLOG_FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor(C["page"])
@@ -1190,9 +1487,10 @@ def build_blog_text(now: dt.datetime, rows: list[dict],
             L.extend(_ma_state(d, unit))
             L.extend(_ichimoku_state(df, unit))
             L.append("")
-            L.append(f"《이미지 {img_no} — {img_names[(name, tf, 'mom')]}》")
-            img_no += 1
-            L.append("")
+            if (name, tf, "mom") in img_names:
+                L.append(f"《이미지 {img_no} — {img_names[(name, tf, 'mom')]}》")
+                img_no += 1
+                L.append("")
             L.append(f"[{name} {tf} · 모멘텀]")
             divs = r.get("div_d") if tf == "일봉" else r.get("div_w")
             L.extend(_bb_state(d))
@@ -1415,13 +1713,9 @@ def run_chart(sample: bool = False, post: bool = False,
         name = r["meta"]["name"]
         safe_name = name.replace(" ", "").replace("/", "")
         for tf in ("일봉", "주봉"):
-            fn = f"{img_no:02d}_{safe_name}_{tf}_추세.png"
-            make_blog_trend(r, tf, date_str, os.path.join(blog_dir, fn))
+            fn = f"{img_no:02d}_{safe_name}_{tf}.png"
+            make_blog_app(r, tf, date_str, os.path.join(blog_dir, fn))
             img_names[(name, tf, "trend")] = fn
-            img_no += 1
-            fn = f"{img_no:02d}_{safe_name}_{tf}_모멘텀.png"
-            make_blog_momentum(r, tf, date_str, os.path.join(blog_dir, fn))
-            img_names[(name, tf, "mom")] = fn
             img_no += 1
     blog_txt = build_blog_text(now, rows, flows_long, img_names, fx_rows)
     with open(os.path.join(blog_dir, "본문.txt"), "w", encoding="utf-8") as f:
