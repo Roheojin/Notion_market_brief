@@ -252,6 +252,20 @@ def _candles(ax, x, d, body_w=0.62, wick_w=1.0):
     return up
 
 
+def _last_price_tag(ax, d):
+    """트레이딩뷰식 현재가 표시 — 마지막 종가 점선 + 오른쪽 가격축 색 태그."""
+    close = float(d["close"].iloc[-1])
+    col = C["up"] if close >= float(d["open"].iloc[-1]) else C["down"]
+    ax.axhline(close, color=col, lw=0.8, ls=(0, (2, 2)), alpha=0.9, zorder=5)
+    ax.annotate(f"{close:,.2f}", xy=(1, close),
+                xycoords=("axes fraction", "data"), xytext=(3, 0),
+                textcoords="offset points", ha="left", va="center",
+                fontsize=8.5, weight="bold", color="#ffffff", zorder=8,
+                annotation_clip=False,
+                bbox=dict(boxstyle="square,pad=0.25", facecolor=col,
+                          edgecolor="none"))
+
+
 def _future_cloud(df: pd.DataFrame, fwd: int):
     """마지막 봉 이후 fwd봉의 선행스팬 A/B (아직 shift 안 된 원값 꼬리)."""
     ich = PARAMS["ichimoku"]
@@ -319,6 +333,7 @@ def _draw_trend(ax, df: pd.DataFrame, n_bars: int, fwd: int,
     # 위쪽은 범례 자리를 여유 있게 (범례가 캔들·구름을 가리지 않도록)
     ax.set_ylim(lo - span * 0.04, hi + span * 0.11)
     ax.set_xlim(-1, len(d) - 1 + fwd + 2)
+    _last_price_tag(ax, d)
 
     if legend:
         ax.legend(loc="upper left", fontsize=8.5, ncols=7, frameon=False,
@@ -358,6 +373,7 @@ def _draw_bb(ax, d, x, divs: list[dict] | None = None):
     lo, hi = float(vals.min()), float(vals.max())
     pad = (hi - lo) * 0.06 or 1.0
     ax.set_ylim(lo - pad, hi + pad)
+    _last_price_tag(ax, d)
     ax.legend(loc="upper left", fontsize=8.5, frameon=False,
               labelcolor=C["ink2"], handlelength=1.3)
 
@@ -878,6 +894,7 @@ def make_blog_fx(fx_rows: list[dict], date_str: str, path: str):
         ax.plot(x, d["ma60"], color=C["ma60"], lw=1.1, alpha=0.9, zorder=3,
                 label="60일선")
         _style_ax(ax)
+        ax.yaxis.tick_left()     # 오른쪽 끝은 현재값 라벨 자리
         v = float(d["close"].iloc[-1])
         v20 = float(d["close"].iloc[-21]) if len(d) > 21 else v
         col = _dir_color(v - v20)
@@ -1066,6 +1083,7 @@ def make_blog_flows(flows_long: pd.DataFrame, date_str: str, path: str):
                     color=C[actor], fontsize=11.5, weight="bold", va="center",
                     annotation_clip=False)
     _style_ax(ax)
+    ax.yaxis.tick_left()     # 오른쪽 끝은 투자자별 누적값 라벨 자리
     t = np.linspace(0, len(cum) - 1, 9).astype(int)
     ax.set_xticks(t)
     ax.set_xticklabels([cum.index[i].strftime("%y.%m") for i in t], fontsize=10)

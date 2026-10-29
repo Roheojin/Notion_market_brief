@@ -16,10 +16,10 @@ INDICES = [
 # 한 줄씩 적으면 티커를 자동으로 찾아 분석합니다 (marketbrief/resolve.py).
 WATCHLIST: list[dict] = []
 
-# 카드 테마: 세션별 light/dark 지정 (환경변수 CARD_THEME이 있으면 그게 우선)
+# 카드 테마: 세션별 light/dark/tradingview 지정 (환경변수 CARD_THEME이 있으면 그게 우선)
 CARD_THEME_BY_SESSION = {
     "us": "light", "kr": "light", "weekly": "light", "stats": "light",
-    "chart": "light",
+    "chart": "tradingview",
 }
 
 # 세션: 아침(07:30)엔 미국장, 저녁(16:00)엔 국내장 마감 브리핑

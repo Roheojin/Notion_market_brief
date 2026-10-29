@@ -82,16 +82,30 @@ _C_DARK = {
     "기관":   "#9085e9",
 }
 
+# 트레이딩뷰 스타일 — TradingView lightweight-charts 기본값
+# (흰 배경 · 격자 #D6DCDE · 글자 #191919 · 상승 #26a69a 초록 / 하락 #ef5350 빨강)
+_C_TV = dict(_C_LIGHT, **{
+    "page":    "#ffffff",
+    "surface": "#ffffff",
+    "ink":     "#191919",
+    "grid":    "#D6DCDE",
+    "axis":    "#D6DCDE",
+    "up":      "#26a69a",
+    "down":    "#ef5350",
+})
+
+_THEMES = {"light": _C_LIGHT, "dark": _C_DARK, "tradingview": _C_TV}
+
 THEME = os.environ.get("CARD_THEME", "light").lower()
-C = dict(_C_DARK if THEME == "dark" else _C_LIGHT)
+C = dict(_THEMES.get(THEME, _C_LIGHT))
 
 
 def set_theme(name: str):
-    """카드 테마 전환 (light/dark)."""
+    """카드 테마 전환 (tradingview/light/dark)."""
     global THEME
     THEME = (name or "light").lower()
     C.clear()
-    C.update(_C_DARK if THEME == "dark" else _C_LIGHT)
+    C.update(_THEMES.get(THEME, _C_LIGHT))
 
 
 W, H, DPI = 1080, 1350, 100
@@ -118,6 +132,12 @@ def _style_ax(ax):
     ax.tick_params(colors=C["muted"], labelsize=9, length=3)
     ax.grid(True, color=C["grid"], linewidth=0.6, alpha=0.9)
     ax.set_axisbelow(True)
+    if THEME == "tradingview":
+        # 트레이딩뷰처럼 가격축은 오른쪽, 위·왼쪽 테두리 없음
+        ax.spines["top"].set_visible(False)
+        ax.spines["left"].set_visible(False)
+        ax.yaxis.tick_right()
+        ax.tick_params(colors=C["ink"], length=0)
 
 
 def _verdict_style(verdict: str) -> tuple[str, str]:
