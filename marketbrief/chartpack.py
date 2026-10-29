@@ -1099,7 +1099,7 @@ def make_blog_momentum(row: dict, tf: str, date_str: str, path: str):
 
 APP_FIGSIZE = (12.0, 15.0)    # 1200x1500 @ DPI 100
 APP = {
-    "ma5": "#F08A24", "ma20": "#3D6FC4", "ma60": "#4E6B3A", "ma120": "#3A9B7B",
+    "ma5": "#F08A24", "ma20": "#1A1A1A", "ma60": "#4E6B3A", "ma120": "#3A9B7B",
     "tenkan": "#7F73A8", "kijun": "#A052B8",
     "span1": "#B5626B", "span2": "#5B84B8",
     "cloud1": "#F0A8B0", "cloud2": "#A0C0F0",    # 선행1 위(빨강) / 선행2 위(파랑)
@@ -1280,7 +1280,8 @@ def make_blog_app(row: dict, tf: str, date_str: str, path: str):
     ax_p.plot(x, d["bb_up"], color=APP["bb_up"], lw=1.4, zorder=3)
     ax_p.plot(x, d["bb_dn"], color=APP["bb_dn"], lw=1.4, zorder=3)
     for key in ("ma5", "ma20", "ma60", "ma120"):
-        ax_p.plot(x, d[key], color=APP[key], lw=1.2, zorder=4)
+        ax_p.plot(x, d[key], color=APP[key], lw=1.7 if key == "ma20" else 1.2,
+                  zorder=4)
     ax_p.plot(x, d["tenkan"], color=APP["tenkan"], lw=0.8, zorder=4)
     ax_p.plot(x, d["kijun"], color=APP["kijun"], lw=0.8, zorder=4)
     _candles(ax_p, x, d, body_w=0.7, wick_w=1.0)
