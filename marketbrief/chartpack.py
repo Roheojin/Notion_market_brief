@@ -1782,9 +1782,15 @@ def make_blog_breadth(breadth: dict, date_str: str, path: str):
 
 
 def run_chart(sample: bool = False, post: bool = False,
-              force: bool = False, market: str = "all") -> list[str]:
+              force: bool = False, market: str = "all",
+              until: dt.date | None = None) -> list[str]:
     """market: "kr"(한국장 마감 — 코스피·니케이·수급·환율), "us"(미국장 마감 —
-    나스닥100·S&P500·다우·비트코인), "all"(전부 한 페이지)."""
+    나스닥100·S&P500·다우·비트코인), "all"(전부 한 페이지).
+    until: 그 날짜까지의 데이터로 분석 (빠진 날 다시 게시용)."""
+
+    def _cut(df):
+        return df if until is None or df is None else df[df.index.date <= until]
+
     os.makedirs(OUT, exist_ok=True)
     now = dt.datetime.now(KST)
     get_daily = sample_daily if sample else fetch_daily
@@ -1794,7 +1800,7 @@ def run_chart(sample: bool = False, post: bool = False,
     with_kr = market in ("all", "kr")
 
     # ── 휴장일 체크: 한국장은 코스피 오늘 봉, 그 외는 S&P500 어제 이상 봉 ──
-    if not sample and not force:
+    if not sample and not force and until is None:
         try:
             # 한국장: 실행이 밀려 자정을 넘겨도 다음 날 09시 전이면 전날 장을 게시
             anchor, lag = (("^KS11", 1 if now.hour < 9 else 0) if market == "kr"
@@ -1824,6 +1830,7 @@ def run_chart(sample: bool = False, post: bool = False,
 
     flows_long = _load_flows(sample) if with_kr else None
     flows_kq = _load_flows(sample, "KOSDAQ") if with_kr else None
+    flows_long, flows_kq = _cut(flows_long), _cut(flows_kq)
     weights = load_weights()
     if weights:
         print(f"[chart] 지표 가중치 적용: {weights}")
@@ -1832,7 +1839,7 @@ def run_chart(sample: bool = False, post: bool = False,
     for meta in metas:
         print(f"[chart] {meta['name']} ({meta['ticker']}) 분석 중...")
         try:
-            df = add_indicators(get_daily(meta["ticker"], fetch_days))
+            df = add_indicators(_cut(get_daily(meta["ticker"], fetch_days)))
         except Exception as e:
             print(f"  !! 시세 수집 실패, 건너뜀: {e}")
             continue
@@ -1890,10 +1897,12 @@ def run_chart(sample: bool = False, post: bool = False,
     if with_kr:
         print("[chart] 환율·금리 · 시장 폭 수집 중...")
         fx_rows = fetch_fx(sample)
-        breadth = _load_breadth(sample)
+        breadth = {k: _cut(v) for k, v in _load_breadth(sample).items()}
     if market in ("all", "us"):
         print("[chart] 미국 금리 · 원자재 수집 중...")
         macro_rows = fetch_fx(sample, MACRO_SERIES)
+    for r in fx_rows + macro_rows:
+        r["df"] = _cut(r["df"])
     if fx_rows or macro_rows:
         log_fx(now, fx_rows + macro_rows)
     img_names: dict = {}

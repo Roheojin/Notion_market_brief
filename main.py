@@ -462,6 +462,8 @@ if __name__ == "__main__":
     ap.add_argument("--force", action="store_true", help="휴장일 체크 무시하고 실행")
     ap.add_argument("--market", choices=["kr", "us", "all"], default="all",
                     help="chart 세션: kr=한국장 마감, us=미국장 마감, all=전부")
+    ap.add_argument("--date", default=None,
+                    help="chart 세션: 이 날짜(YYYY-MM-DD)까지의 데이터로 다시 게시")
     args = ap.parse_args()
 
     session = args.session
@@ -495,7 +497,9 @@ if __name__ == "__main__":
         elif session == "chart":
             from marketbrief.chartpack import run_chart
             cards_out = run_chart(sample=args.sample, post=args.post,
-                                  force=args.force, market=args.market)
+                                  force=args.force, market=args.market,
+                                  until=(dt.date.fromisoformat(args.date)
+                                         if args.date else None))
         else:
             cards_out = run(session=session, sample=args.sample,
                             post=args.post, force=args.force)

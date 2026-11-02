@@ -14,11 +14,48 @@ FLOW_COLS = ["개인", "외국인", "기관"]  # 순매수 대금 (억원)
 FLOW_LONG_DAYS = 490  # 수급 흐름 차트 기간 (약 2년 거래일)
 
 
+# 코스피·코스닥은 KRX 공식 지수 시세(pykrx)를 먼저 씁니다 — 야후는 한국 자정 무렵
+# 마지막 날 봉이 빠졌다 다시 생기는 일이 있어, 늦게 도는 실행이 전날 장을 놓칩니다.
+KRX_INDEX = {"^KS11": "1001", "^KQ11": "2001"}
+
+
+def _fetch_krx_index(code: str, days: int) -> pd.DataFrame:
+    from pykrx import stock
+
+    end = dt.date.today()
+    start = end - dt.timedelta(days=int(days * 1.5) + 30)
+    parts, cur = [], start
+    while cur <= end:                      # 2년씩 나눠 조회
+        to = min(cur + dt.timedelta(days=730), end)
+        got = stock.get_index_ohlcv(cur.strftime("%Y%m%d"), to.strftime("%Y%m%d"), code)
+        if got is not None and not got.empty:
+            parts.append(got)
+        cur = to + dt.timedelta(days=1)
+    if not parts:
+        raise RuntimeError(f"KRX 지수 시세 없음: {code}")
+    df = pd.concat(parts)
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    df = df.rename(columns={"시가": "open", "고가": "high", "저가": "low",
+                            "종가": "close", "거래량": "volume"})
+    df = df[["open", "high", "low", "close", "volume"]].astype(float)
+    df = df[df["close"] > 0]
+    df.index = pd.to_datetime(df.index)
+    return df.tail(days)
+
+
 def fetch_daily(ticker: str, days: int | None = None) -> pd.DataFrame:
-    """yfinance에서 일봉 OHLCV를 받아 표준 컬럼(open/high/low/close/volume)으로 반환."""
+    """일봉 OHLCV를 표준 컬럼(open/high/low/close/volume)으로 반환.
+
+    코스피·코스닥은 KRX(pykrx), 실패하거나 그 밖의 종목은 yfinance.
+    """
     import yfinance as yf
 
     days = days or PARAMS["history_days"]
+    if ticker in KRX_INDEX:
+        try:
+            return _fetch_krx_index(KRX_INDEX[ticker], days)
+        except Exception as e:
+            print(f"  (KRX 지수 시세 실패, 야후로 대신: {type(e).__name__}: {e})")
     df = yf.download(
         ticker,
         period=f"{max(days, 260) + 120}d",

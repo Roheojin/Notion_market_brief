@@ -22,6 +22,10 @@ on:
         description: "휴장일 체크 무시 (테스트용)"
         type: boolean
         default: false
+      date:
+        description: "빠진 날 다시 게시: 그 거래일 (YYYY-MM-DD, 비우면 최신)"
+        type: string
+        default: ""
 
 permissions:
   contents: write   # history/ (지표 로그 · 환율 로그 · 수급 캐시) 커밋용
@@ -52,9 +56,10 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MARKETS: ${{ github.event_name == 'schedule' && ((github.event.schedule == '40 11 * * 1-5' || github.event.schedule == '10 13 * * 1-5') && 'kr' || 'us') || (inputs.market == 'both' && 'kr us' || inputs.market) }}
           FORCE: ${{ inputs.force && '--force' || '' }}
+          DATE: ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
         run: |
           for m in $MARKETS; do
-            python main.py --session chart --market "$m" --post $FORCE
+            python main.py --session chart --market "$m" --post $FORCE $DATE
           done
 
       - name: 지표 로그 · 수급 캐시 커밋
